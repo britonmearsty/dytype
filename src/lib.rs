@@ -1,3 +1,4 @@
+pub mod animation;
 pub mod app;
 pub mod audio;
 pub mod config;

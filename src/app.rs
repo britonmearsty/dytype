@@ -7,6 +7,7 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScree
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
+use crate::animation::Animations;
 use crate::audio::player::AudioPlayer;
 use crate::config::settings::Settings;
 use crate::input::keybindings::{Action, Keybindings};
@@ -18,6 +19,8 @@ use crate::typing::generator::{Generator, TestConfig, WordPools};
 use crate::typing::test::{BACKSPACE_KEY, TestMode};
 use crate::ui;
 use crate::ui::config::ConfigMenu;
+
+const FRAME_DURATION: Duration = Duration::from_millis(16);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppState {
@@ -42,6 +45,7 @@ pub struct App {
     pub generator: Generator,
     pub missed_words: Vec<String>,
     pub live_stats: LiveStats,
+    pub anim: Animations,
     pub should_quit: bool,
 }
 
@@ -66,6 +70,7 @@ impl App {
             generator: Generator::new(),
             missed_words: Vec::new(),
             live_stats: LiveStats::default(),
+            anim: Animations::new(),
             should_quit: false,
         })
     }
@@ -75,6 +80,7 @@ impl App {
         let (mode, words) = self.generator.generate(&self.config, &self.pools, &self.missed_words);
         self.engine = Engine::with_test(mode, &words);
         self.live_stats = LiveStats::default();
+        self.anim.mark_test_start(Instant::now());
     }
 
     fn collect_missed_words(&mut self) {
@@ -115,9 +121,11 @@ impl App {
             Action::MoveRight if self.state == AppState::Menu => self.config_menu.cycle(1),
             Action::Backspace if self.state == AppState::Typing => {
                 self.engine.handle_key(BACKSPACE_KEY, now);
+                self.anim.observe(&self.engine.test, now);
             }
             Action::TypeChar(c) if self.state == AppState::Typing => {
                 self.engine.handle_key(c, now);
+                self.anim.observe(&self.engine.test, now);
             }
             _ => {}
         }
@@ -133,17 +141,25 @@ impl App {
             && let Some(deadline) = self.engine.test.deadline()
         {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            return remaining.min(Duration::from_millis(100));
+            return remaining.min(FRAME_DURATION);
         }
-        Duration::from_millis(50)
+        FRAME_DURATION
     }
 
     pub fn tick(&mut self, now: Instant) {
+        self.anim.update(now);
         if self.state == AppState::Typing {
             self.engine.test.tick(now);
             self.live_stats = LiveStats::calculate(&self.engine.test, now);
             if self.engine.test.is_finished() {
                 self.collect_missed_words();
+                self.anim.results.start(
+                    self.live_stats.wpm as f32,
+                    self.live_stats.raw_wpm as f32,
+                    self.live_stats.accuracy as f32,
+                    self.live_stats.consistency as f32,
+                    now,
+                );
                 self.state = AppState::Results;
             }
         }
