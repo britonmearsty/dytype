@@ -10,7 +10,7 @@ use ratatui::Terminal;
 use crate::animation::Animations;
 use crate::audio::event::SoundEvent;
 use crate::audio::manager::AudioManager;
-use crate::config::settings::Settings;
+use crate::config::settings::{Config, CursorAnimation};
 use crate::input::keybindings::{Action, Keybindings};
 use crate::persistence::database::Database;
 use crate::stats::history::History;
@@ -23,8 +23,7 @@ use crate::ui;
 use crate::ui::config::ConfigMenu;
 use crate::ui::history::HistoryTab;
 use crate::ui::settings::SettingsMenu;
-
-const FRAME_DURATION: Duration = Duration::from_millis(16);
+use crate::ui::widgets::theme::Theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppState {
@@ -38,7 +37,8 @@ pub enum AppState {
 
 pub struct App {
     pub state: AppState,
-    pub settings: Settings,
+    pub settings: Config,
+    pub theme: Theme,
     pub keybindings: Keybindings,
     pub history: History,
     pub history_tab: HistoryTab,
@@ -61,16 +61,21 @@ pub struct App {
 
 impl App {
     pub fn new() -> io::Result<Self> {
-        let settings = Settings::load()?;
+        let settings = Config::load()?;
         let keybindings = Keybindings::load()?;
         let database = Database::open()?;
         let history = database.load_history()?;
-        let audio = AudioManager::new(&settings.audio)?;
-        let config = TestConfig::default();
-        let settings_menu = SettingsMenu::from_settings(&settings);
+        let audio = AudioManager::new(&settings.sounds)?;
+        let theme = Theme::resolve(&settings.theme.name);
+        let config = TestConfig {
+            difficulty: settings.typing.difficulty,
+            ..TestConfig::default()
+        };
+        let settings_menu = SettingsMenu::from_config(&settings);
         Ok(Self {
             state: AppState::Menu,
             settings,
+            theme,
             keybindings,
             history,
             history_tab: HistoryTab::default(),
@@ -138,6 +143,8 @@ impl App {
                 AppState::Results => self.start_new_test(),
                 AppState::Menu => {
                     self.config = self.config_menu.apply();
+                    self.config.punctuation = self.settings.typing.punctuation;
+                    self.config.numbers = self.settings.typing.numbers;
                     self.start_new_test();
                 }
                 AppState::Settings => self.open_config_menu(),
@@ -180,13 +187,19 @@ impl App {
                 AppState::History => self.history_tab = self.history_tab.cycle(1),
                 _ => {}
             },
-            Action::Backspace if self.state == AppState::Typing => {
+            Action::Backspace if self.state == AppState::Typing && self.settings.typing.backspace => {
                 self.engine.handle_key(BACKSPACE_KEY, now);
                 self.anim.observe(&self.engine.test, now);
+                if self.settings.display.cursor_animation == CursorAnimation::Off {
+                    self.anim.snap_cursor();
+                }
             }
             Action::TypeChar(c) if self.state == AppState::Typing => {
                 self.engine.handle_key(c, now);
                 self.anim.observe(&self.engine.test, now);
+                if self.settings.display.cursor_animation == CursorAnimation::Off {
+                    self.anim.snap_cursor();
+                }
                 self.dispatch_typing_sounds();
             }
             _ => {}
@@ -194,13 +207,14 @@ impl App {
     }
 
     fn open_settings(&mut self) {
-        self.settings_menu = SettingsMenu::from_settings(&self.settings);
+        self.settings_menu = SettingsMenu::from_config(&self.settings);
         self.state = AppState::Settings;
     }
 
     fn commit_settings(&mut self) {
-        self.settings.audio = self.settings_menu.apply();
-        self.audio.reconfigure(&self.settings.audio);
+        self.settings = self.settings_menu.apply(&self.settings);
+        self.theme = Theme::resolve(&self.settings.theme.name);
+        self.audio.reconfigure(&self.settings.sounds);
         if let Err(error) = self.settings.save() {
             eprintln!("warning: failed to save settings: {error}");
         }
@@ -211,7 +225,7 @@ impl App {
         self.sounds_seen = self.engine.test.keystrokes.len();
         self.sounds_words = self.engine.test.completed_words();
         self.sounds_finished = self.engine.test.is_finished();
-        let audio = &self.settings.audio;
+        let audio = &self.settings.sounds;
         for event in events {
             self.audio.emit(event, audio);
         }
@@ -247,9 +261,15 @@ impl App {
             && let Some(deadline) = self.engine.test.deadline()
         {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            return remaining.min(FRAME_DURATION);
+            let frame = self.frame_duration();
+            return remaining.min(frame);
         }
-        FRAME_DURATION
+        self.frame_duration()
+    }
+
+    fn frame_duration(&self) -> Duration {
+        let fps = self.settings.display.fps.max(1);
+        Duration::from_millis(u64::from((1000 + fps / 2) / fps))
     }
 
     pub fn tick(&mut self, now: Instant) {

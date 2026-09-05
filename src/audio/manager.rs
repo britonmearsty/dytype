@@ -1,6 +1,6 @@
 use super::backend::{SilentBackend, SoundBackend, WaveBackend};
 use super::event::SoundEvent;
-use super::settings::{AudioSettings, SoundPack};
+use super::settings::{SoundSettings, SoundPack};
 
 /// Owns the active sound backend and routes engine events to it, honoring the
 /// user's audio settings. The engine and UI never touch backends directly.
@@ -9,13 +9,13 @@ pub struct AudioManager {
 }
 
 impl AudioManager {
-    pub fn new(settings: &AudioSettings) -> std::io::Result<Self> {
+    pub fn new(settings: &SoundSettings) -> std::io::Result<Self> {
         Ok(Self {
             backend: Self::build_backend(settings),
         })
     }
 
-    fn build_backend(settings: &AudioSettings) -> Box<dyn SoundBackend> {
+    fn build_backend(settings: &SoundSettings) -> Box<dyn SoundBackend> {
         if settings.sound_pack == SoundPack::None {
             Box::new(SilentBackend)
         } else if let Some(backend) = WaveBackend::new(settings.sound_pack) {
@@ -25,11 +25,11 @@ impl AudioManager {
         }
     }
 
-    pub fn reconfigure(&mut self, settings: &AudioSettings) {
+    pub fn reconfigure(&mut self, settings: &SoundSettings) {
         self.backend = Self::build_backend(settings);
     }
 
-    pub fn emit(&mut self, event: SoundEvent, settings: &AudioSettings) {
+    pub fn emit(&mut self, event: SoundEvent, settings: &SoundSettings) {
         if !settings.enabled {
             return;
         }
@@ -77,7 +77,7 @@ mod tests {
     #[test]
     fn disabled_master_toggle_silences_everything() {
         let (mut manager, log) = manager_with_recording();
-        let settings = AudioSettings {
+        let settings = SoundSettings {
             enabled: false,
             ..Default::default()
         };
@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn error_and_complete_toggles_gate_their_events() {
         let (mut manager, log) = manager_with_recording();
-        let settings = AudioSettings {
+        let settings = SoundSettings {
             error: false,
             complete: false,
             ..Default::default()
@@ -112,12 +112,12 @@ mod tests {
     #[test]
     fn volume_is_clamped_to_unit_range() {
         let (mut manager, log) = manager_with_recording();
-        let loud = AudioSettings {
+        let loud = SoundSettings {
             volume: 1.7,
             ..Default::default()
         };
         manager.emit(SoundEvent::Keypress, &loud);
-        let muted = AudioSettings {
+        let muted = SoundSettings {
             volume: -0.3,
             ..Default::default()
         };
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn none_pack_builds_silent_backend() {
-        let settings = AudioSettings {
+        let settings = SoundSettings {
             sound_pack: SoundPack::None,
             ..Default::default()
         };

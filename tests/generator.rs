@@ -27,6 +27,8 @@ fn embedding_pool_into_message_uses_generated_words() {
     let config = TestConfig {
         kind: TestKind::Words(25),
         difficulty: Difficulty::Hard,
+        punctuation: false,
+        numbers: false,
     };
     let (mode, words) = generator.generate(&config, &pools(), &[]);
     assert_eq!(mode, TestMode::Words(25));

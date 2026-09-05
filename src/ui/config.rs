@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
@@ -169,28 +169,33 @@ pub struct ConfigScreen;
 impl ConfigScreen {
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect, app: &App) {
         let menu = &app.config_menu;
+        let theme = app.theme;
         let mut lines = vec![Line::from("")];
         for (i, row) in menu.rows().iter().enumerate() {
             let selected = i == menu.selected;
             let marker = if selected { "▸" } else { " " };
             let value_style = if selected {
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme.correct).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(theme.muted)
             };
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("   {marker} {:<12}", row.label()),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(theme.accent),
                 ),
                 Span::styled(menu.value_text(*row), value_style),
             ]));
         }
         lines.push(Line::from(""));
-        lines.push(Line::from(
+        lines.push(Line::from(Span::styled(
             "   ↑/↓ move   ←/→ change   Enter start test   F2 settings   F3 history   Esc quit",
-        ));
-        let block = Block::default().title(" config ").borders(Borders::ALL);
+            Style::default().fg(theme.muted),
+        )));
+        let block = Block::default()
+            .title(" config ")
+            .borders(Borders::ALL)
+            .style(Style::default().bg(theme.background));
         frame.render_widget(Paragraph::new(lines).block(block), area);
     }
 }

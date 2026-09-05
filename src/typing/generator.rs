@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::typing::rng::{Rng, XorShift};
 use crate::typing::test::TestMode;
 use crate::typing::words::{
@@ -8,9 +10,11 @@ use crate::typing::words::{
 
 const PUNCTUATION: [char; 6] = ['.', ',', ';', ':', '!', '?'];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Difficulty {
     Easy,
+    #[default]
     Normal,
     Hard,
     Expert,
@@ -49,6 +53,10 @@ pub enum TestKind {
 pub struct TestConfig {
     pub kind: TestKind,
     pub difficulty: Difficulty,
+    /// Sprinkle punctuation into lower difficulties.
+    pub punctuation: bool,
+    /// Replace some words with numbers on lower difficulties.
+    pub numbers: bool,
 }
 
 impl Default for TestConfig {
@@ -56,13 +64,20 @@ impl Default for TestConfig {
         Self {
             kind: TestKind::Words(25),
             difficulty: Difficulty::Normal,
+            punctuation: false,
+            numbers: false,
         }
     }
 }
 
 impl TestConfig {
     pub fn new(kind: TestKind, difficulty: Difficulty) -> Self {
-        Self { kind, difficulty }
+        Self {
+            kind,
+            difficulty,
+            punctuation: false,
+            numbers: false,
+        }
     }
 
     pub fn label(&self) -> String {
@@ -120,12 +135,24 @@ impl Generator {
     ) -> (TestMode, Vec<String>) {
         match &config.kind {
             TestKind::Words(count) => {
-                let words = self.generate_words(config.difficulty, pools, *count);
+                let words = self.generate_words(
+                    config.difficulty,
+                    config.punctuation,
+                    config.numbers,
+                    pools,
+                    *count,
+                );
                 (TestMode::Words(*count), words)
             }
             TestKind::Time(duration) => {
                 let count = words_for_duration(*duration);
-                let words = self.generate_words(config.difficulty, pools, count);
+                let words = self.generate_words(
+                    config.difficulty,
+                    config.punctuation,
+                    config.numbers,
+                    pools,
+                    count,
+                );
                 (TestMode::Time(*duration), words)
             }
             TestKind::Quote => {
@@ -156,21 +183,20 @@ impl Generator {
     fn generate_words(
         &mut self,
         difficulty: Difficulty,
+        punctuation: bool,
+        numbers: bool,
         pools: &WordPools,
         count: usize,
     ) -> Vec<String> {
         let words = self.sample(difficulty.pool(pools), count);
-        match difficulty {
-            Difficulty::Easy | Difficulty::Normal => words,
-            Difficulty::Hard => words
-                .into_iter()
-                .map(|word| self.decorate_hard(word))
-                .collect(),
-            Difficulty::Expert => words
-                .into_iter()
-                .map(|word| self.decorate_expert(word))
-                .collect(),
+        let heavy = difficulty == Difficulty::Hard || difficulty == Difficulty::Expert;
+        if !heavy && !punctuation && !numbers {
+            return words;
         }
+        words
+            .into_iter()
+            .map(|word| self.decorate(word, difficulty, punctuation, numbers))
+            .collect()
     }
 
     fn sample(&mut self, pool: &[String], count: usize) -> Vec<String> {
@@ -196,26 +222,45 @@ impl Generator {
         quote.split_whitespace().map(str::to_owned).collect()
     }
 
-    fn decorate_hard(&mut self, mut word: String) -> String {
-        if self.rng.chance(8) {
-            capitalize(&mut word);
+    /// Decorates a sampled word according to its difficulty (Hard and Expert
+    /// always style words; lower difficulties gain punctuation/numbers only
+    /// when the corresponding flags are enabled).
+    fn decorate(
+        &mut self,
+        mut word: String,
+        difficulty: Difficulty,
+        punctuation: bool,
+        numbers: bool,
+    ) -> String {
+        let heavy = difficulty == Difficulty::Hard || difficulty == Difficulty::Expert;
+        if heavy {
+            match difficulty {
+                Difficulty::Expert => {
+                    if self.rng.chance(10) {
+                        word = word.to_uppercase();
+                    } else if self.rng.chance(8) {
+                        capitalize(&mut word);
+                    }
+                }
+                _ => {
+                    if self.rng.chance(8) {
+                        capitalize(&mut word);
+                    }
+                }
+            }
         }
-        if self.rng.chance(6) {
+        let add_punct = match difficulty {
+            Difficulty::Expert => self.rng.chance(8),
+            _ => self.rng.chance(6),
+        };
+        if add_punct && (heavy || punctuation) {
             word.push(self.random_punctuation());
         }
-        word
-    }
-
-    fn decorate_expert(&mut self, mut word: String) -> String {
-        if self.rng.chance(10) {
-            word = word.to_uppercase();
-        } else if self.rng.chance(8) {
-            capitalize(&mut word);
-        }
-        if self.rng.chance(8) {
-            word.push(self.random_punctuation());
-        }
-        if self.rng.chance(5) {
+        let add_number = match difficulty {
+            Difficulty::Expert => self.rng.chance(5),
+            _ => self.rng.chance(6),
+        };
+        if add_number && (difficulty == Difficulty::Expert || numbers) {
             word = (self.rng.next_below(999) + 1).to_string();
         }
         word
@@ -349,6 +394,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn punctuation_flag_decorates_easy_words() {
+        let mut saw_punct = false;
+        let mut config = TestConfig::new(TestKind::Words(50), Difficulty::Easy);
+        config.punctuation = true;
+        for seed in 0..400 {
+            let mut generator = Generator::with_seed(seed);
+            let (_, words) = generator.generate(&config, &pools(), &[]);
+            saw_punct |= words
+                .iter()
+                .any(|word| word.chars().any(|c| PUNCTUATION.contains(&c)));
+        }
+        assert!(saw_punct, "punctuation flag should decorate easy words across seeds");
+    }
+
+    #[test]
+    fn numbers_flag_decorates_normal_words() {
+        let mut saw_digit = false;
+        let mut config = TestConfig::new(TestKind::Words(50), Difficulty::Normal);
+        config.numbers = true;
+        for seed in 0..400 {
+            let mut generator = Generator::with_seed(seed);
+            let (_, words) = generator.generate(&config, &pools(), &[]);
+            saw_digit |= words.iter().any(|word| word.chars().any(|c| c.is_ascii_digit()));
+        }
+        assert!(saw_digit, "numbers flag should replace words with numbers across seeds");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
@@ -11,6 +11,7 @@ use crate::stats::chart;
 use crate::stats::progress::{self, ACHIEVEMENTS};
 use crate::stats::result::TestResult;
 use crate::typing::test::TestMode;
+use crate::ui::widgets::theme::Theme;
 
 const TABS: [HistoryTab; 5] = [
     HistoryTab::Overview,
@@ -50,36 +51,36 @@ impl HistoryTab {
     }
 }
 
-fn tab_bar(tab: HistoryTab) -> Line<'static> {
+fn tab_bar(tab: HistoryTab, theme: Theme) -> Line<'static> {
     let mut spans = Vec::with_capacity(TABS.len());
     for (i, option) in TABS.iter().enumerate() {
         let pad = if i == 0 { "" } else { "  " };
         if *option == tab {
             spans.push(Span::styled(
                 format!("{pad}[ {} ]", option.label()),
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
             ));
         } else {
             spans.push(Span::styled(
                 format!("{pad}  {} ", option.label()),
-                Style::default().fg(Color::Gray),
+                Style::default().fg(theme.muted),
             ));
         }
     }
     Line::from(spans)
 }
 
-fn section(title: &str) -> Line<'static> {
+fn section(title: &str, theme: Theme) -> Line<'static> {
     Line::from(Span::styled(
         format!(" {title} "),
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
     ))
 }
 
-fn empty_state() -> Line<'static> {
+fn empty_state(theme: Theme) -> Line<'static> {
     Line::from(Span::styled(
         "No completed tests yet. Finish a test and it will show up here.",
-        Style::default().fg(Color::Gray),
+        Style::default().fg(theme.muted),
     ))
 }
 
@@ -113,46 +114,48 @@ impl HistoryScreen {
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect, app: &App) {
         let tab = app.history_tab;
         let results = &app.history.results;
+        let theme = app.theme;
         let mut lines = Vec::new();
 
         lines.push(Line::from(""));
-        lines.push(tab_bar(tab));
+        lines.push(tab_bar(tab, theme));
         lines.push(Line::from(""));
 
         if results.is_empty() {
-            lines.push(empty_state());
+            lines.push(empty_state(theme));
         } else {
             match tab {
-                HistoryTab::Overview => self.render_overview(&mut lines, results),
-                HistoryTab::Wpm => self.render_wpm(&mut lines, results, area),
-                HistoryTab::Accuracy => self.render_accuracy(&mut lines, results, area),
-                HistoryTab::Errors => self.render_errors(&mut lines, results, area),
-                HistoryTab::History => self.render_table(&mut lines, results),
+                HistoryTab::Overview => self.render_overview(&mut lines, results, theme),
+                HistoryTab::Wpm => self.render_wpm(&mut lines, results, area, theme),
+                HistoryTab::Accuracy => self.render_accuracy(&mut lines, results, area, theme),
+                HistoryTab::Errors => self.render_errors(&mut lines, results, area, theme),
+                HistoryTab::History => self.render_table(&mut lines, results, theme),
             }
         }
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "←/→ switch view   F2 settings   Enter new test   Esc back",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         )));
 
         let block = Block::default()
             .title(format!(" history · {} ", tab.label()))
-            .borders(Borders::ALL);
+            .borders(Borders::ALL)
+            .style(Style::default().bg(theme.background));
         frame.render_widget(
             Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
             area,
         );
     }
 
-    fn render_overview(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult]) {
+    fn render_overview(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], theme: Theme) {
         let summary = analysis::summarize(results);
         let info = progress::level_from_xp(progress::total_xp(results));
         let earned = progress::earned(results);
         let streak = progress::longest_streak(results);
 
-        lines.push(section("summary"));
+        lines.push(section("summary", theme));
         lines.push(Line::from(format!(
             "  Tests: {:<6} Best WPM: {:<6.0} Avg WPM: {:.0}",
             summary.total_tests, summary.best_wpm, summary.avg_wpm
@@ -172,7 +175,7 @@ impl HistoryScreen {
         )));
 
         lines.push(Line::from(""));
-        lines.push(section("progression"));
+        lines.push(section("progression", theme));
         let bar_width: usize = 24;
         let filled = (info.progress() * bar_width as f64).round() as usize;
         let bar: String = "█".repeat(filled) + &"░".repeat(bar_width.saturating_sub(filled));
@@ -181,7 +184,7 @@ impl HistoryScreen {
                 "  Level {}   XP {}/{}   total {}",
                 info.level, info.xp_into_level, info.xp_for_next_level, info.total_xp
             ),
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(format!(
             "  [{bar}]  {:.0}%        streak {} day{}",
@@ -191,13 +194,13 @@ impl HistoryScreen {
         )));
 
         lines.push(Line::from(""));
-        lines.push(section("achievements"));
+        lines.push(section("achievements", theme));
         for (achievement, achieved) in ACHIEVEMENTS.iter().zip(earned.iter()) {
             let mark = if *achieved { "✓" } else { "·" };
             let style = if *achieved {
-                Style::default().fg(Color::Green)
+                Style::default().fg(theme.correct)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(theme.muted)
             };
             lines.push(Line::from(Span::styled(
                 format!(
@@ -209,10 +212,10 @@ impl HistoryScreen {
         }
     }
 
-    fn render_wpm(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], area: Rect) {
+    fn render_wpm(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], area: Rect, theme: Theme) {
         let width = chart_width(area);
 
-        lines.push(section("wpm over time"));
+        lines.push(section("wpm over time", theme));
         let series = analysis::wpm_series(results);
         for row in chart::line_chart(&series, width, CHART_HEIGHT) {
             lines.push(Line::from(format!("  {row}")));
@@ -225,7 +228,7 @@ impl HistoryScreen {
         )));
 
         lines.push(Line::from(""));
-        lines.push(section("daily average wpm (last 14 days)"));
+        lines.push(section("daily average wpm (last 14 days)", theme));
         let days = analysis::daily(results, 14);
         let weeks_max = max_wpm(&days);
         for point in &days {
@@ -237,7 +240,7 @@ impl HistoryScreen {
         }
 
         lines.push(Line::from(""));
-        lines.push(section("personal best progression"));
+        lines.push(section("personal best progression", theme));
         let best = analysis::best_progression(results);
         lines.push(Line::from(format!(
             "  {}  {:.0} wpm",
@@ -246,10 +249,10 @@ impl HistoryScreen {
         )));
     }
 
-    fn render_accuracy(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], area: Rect) {
+    fn render_accuracy(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], area: Rect, theme: Theme) {
         let width = chart_width(area);
 
-        lines.push(section("accuracy over time"));
+        lines.push(section("accuracy over time", theme));
         let accuracy = analysis::accuracy_series(results);
         for row in chart::line_chart(&accuracy, width, CHART_HEIGHT) {
             lines.push(Line::from(format!("  {row}")));
@@ -263,7 +266,7 @@ impl HistoryScreen {
         )));
 
         lines.push(Line::from(""));
-        lines.push(section("consistency over time"));
+        lines.push(section("consistency over time", theme));
         let consistency = analysis::consistency_series(results);
         for row in chart::line_chart(&consistency, width, CHART_HEIGHT) {
             lines.push(Line::from(format!("  {row}")));
@@ -275,10 +278,10 @@ impl HistoryScreen {
         )));
     }
 
-    fn render_errors(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], area: Rect) {
+    fn render_errors(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], area: Rect, theme: Theme) {
         let width = chart_width(area);
 
-        lines.push(section("error rate over time"));
+        lines.push(section("error rate over time", theme));
         let rate = analysis::error_rate_series(results);
         for row in chart::line_chart(&rate, width, CHART_HEIGHT) {
             lines.push(Line::from(format!("  {row}")));
@@ -290,12 +293,12 @@ impl HistoryScreen {
         )));
 
         lines.push(Line::from(""));
-        lines.push(section("most mistyped characters"));
+        lines.push(section("most mistyped characters", theme));
         let stats = analysis::character_errors(results, 10);
         if stats.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  No recorded mistakes. Flawless!",
-                Style::default().fg(Color::Green),
+                Style::default().fg(theme.correct),
             )));
         } else {
             let max_errors = stats.iter().map(|s| s.errors).max().unwrap_or(1) as f64;
@@ -310,7 +313,7 @@ impl HistoryScreen {
         }
 
         lines.push(Line::from(""));
-        lines.push(section("duration distribution"));
+        lines.push(section("duration distribution", theme));
         let total = results.len() as f64;
         for (bucket, count) in analysis::duration_distribution(results) {
             let bar = chart::bar_row(count as f64, total, width.saturating_sub(20).max(4));
@@ -322,14 +325,14 @@ impl HistoryScreen {
         }
     }
 
-    fn render_table(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult]) {
-        lines.push(section("recent tests"));
+    fn render_table(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], theme: Theme) {
+        lines.push(section("recent tests", theme));
         lines.push(Line::from(Span::styled(
             format!(
                 "  {:<4} {:<6} {:<6} {:<7} {:>4} {:>6} {:>5} {:>6}",
                 "id", "date", "mode", "difficulty", "wpm", "accuracy", "errors", "time"
             ),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
         )));
         for result in results.iter().rev().take(12) {
             lines.push(Line::from(format!(
@@ -361,7 +364,7 @@ mod tests {
 
     #[test]
     fn tab_bar_highlights_active_tab() {
-        let bar = tab_bar(HistoryTab::Wpm);
+        let bar = tab_bar(HistoryTab::Wpm, crate::ui::widgets::theme::DEFAULT);
         let text = bar.to_string();
         assert!(text.contains("[ WPM ]"));
         assert!(text.contains("Overview"));
@@ -387,7 +390,7 @@ mod tests {
 
     #[test]
     fn tab_bar_default_marks_overview_active() {
-        let bar = tab_bar(HistoryTab::Overview).to_string();
+        let bar = tab_bar(HistoryTab::Overview, crate::ui::widgets::theme::DEFAULT).to_string();
         assert!(bar.starts_with("[ Overview ]"));
     }
 }

@@ -32,7 +32,7 @@ fn default_volume() -> f64 {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AudioSettings {
+pub struct SoundSettings {
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// 0.0 ..= 1.0 playback amplitude.
@@ -46,7 +46,7 @@ pub struct AudioSettings {
     pub complete: bool,
 }
 
-impl Default for AudioSettings {
+impl Default for SoundSettings {
     fn default() -> Self {
         Self {
             enabled: true,

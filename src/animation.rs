@@ -291,6 +291,11 @@ impl Animations {
         self.cursor.set_target(index as f32);
     }
 
+    /// Jump the cursor straight to its target (no smoothing).
+    pub fn snap_cursor(&mut self) {
+        self.cursor.current_x = self.cursor_target as f32;
+    }
+
     pub fn char_effect(&self, index: usize, now: Instant) -> Option<(EffectKind, f32)> {
         self.char_effects.progress(index, now)
     }
@@ -385,6 +390,17 @@ mod tests {
             assert!(cursor.current_x <= 5.0 + 1e-6);
             last = cursor.current_x;
         }
+    }
+
+    #[test]
+    fn snap_cursor_teleports_to_target() {
+        let mut anim = Animations::new();
+        let now = base();
+        anim.mark_test_start(now);
+        anim.set_cursor_target(7);
+        anim.snap_cursor();
+        assert_eq!(anim.cursor.current_x, 7.0);
+        assert_eq!(anim.cursor.current_x, anim.cursor.target_x);
     }
 
     #[test]
