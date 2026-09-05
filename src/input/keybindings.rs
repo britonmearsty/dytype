@@ -6,6 +6,10 @@ pub enum Action {
     Backspace,
     Restart,
     Submit,
+    MoveUp,
+    MoveDown,
+    MoveLeft,
+    MoveRight,
     Quit,
     Ignore,
 }
@@ -27,8 +31,40 @@ impl Keybindings {
             KeyCode::Backspace => Action::Backspace,
             KeyCode::Tab => Action::Restart,
             KeyCode::Enter => Action::Submit,
+            KeyCode::Up => Action::MoveUp,
+            KeyCode::Down => Action::MoveDown,
+            KeyCode::Left => Action::MoveLeft,
+            KeyCode::Right => Action::MoveRight,
             KeyCode::Esc => Action::Quit,
             _ => Action::Ignore,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyCode;
+
+    fn event(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn arrows_map_to_menu_actions() {
+        let binds = Keybindings::load().unwrap();
+        assert_eq!(binds.handle(&event(KeyCode::Up)), Action::MoveUp);
+        assert_eq!(binds.handle(&event(KeyCode::Down)), Action::MoveDown);
+        assert_eq!(binds.handle(&event(KeyCode::Left)), Action::MoveLeft);
+        assert_eq!(binds.handle(&event(KeyCode::Right)), Action::MoveRight);
+    }
+
+    #[test]
+    fn common_actions_unchanged() {
+        let binds = Keybindings::load().unwrap();
+        assert_eq!(binds.handle(&event(KeyCode::Char('a'))), Action::TypeChar('a'));
+        assert_eq!(binds.handle(&event(KeyCode::Enter)), Action::Submit);
+        assert_eq!(binds.handle(&event(KeyCode::Tab)), Action::Restart);
+        assert_eq!(binds.handle(&event(KeyCode::Esc)), Action::Quit);
     }
 }

@@ -27,7 +27,7 @@ impl ResultsScreen {
             )),
             Line::from(format!("Time: {:.1}s", ls.elapsed.as_secs_f64())),
             Line::from(""),
-            Line::from("Tab/Enter: new test    Esc: quit"),
+            Line::from("Enter: new test    Tab: config    Esc: quit"),
         ];
         let block = Block::default().title(" results ").borders(Borders::ALL);
         frame.render_widget(

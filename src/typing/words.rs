@@ -2,7 +2,14 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::typing::rng::{Rng, XorShift};
+
 pub const DEFAULT_WORDS: &str = include_str!("../../assets/words/english.txt");
+pub const EASY_WORDS: &str = include_str!("../../assets/words/easy.txt");
+pub const NORMAL_WORDS: &str = include_str!("../../assets/words/normal.txt");
+pub const HARD_WORDS: &str = include_str!("../../assets/words/hard.txt");
+pub const EXPERT_WORDS: &str = include_str!("../../assets/words/expert.txt");
+pub const QUOTES: &str = include_str!("../../assets/quotes/english.txt");
 
 #[derive(Serialize, Deserialize)]
 pub struct Words {
@@ -12,21 +19,26 @@ pub struct Words {
 impl Words {
     pub fn load(path: &Path) -> std::io::Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        let list = parse_words(&content);
-        Ok(Self { list })
+        Ok(Self {
+            list: parse_words(&content),
+        })
+    }
+
+    pub fn from_text(content: &str) -> Self {
+        Self {
+            list: parse_words(content),
+        }
     }
 
     pub fn builtin() -> Self {
-        Self {
-            list: parse_words(DEFAULT_WORDS),
-        }
+        Self::from_text(DEFAULT_WORDS)
     }
 
     pub fn shuffled(&self) -> Self {
         let mut rng = XorShift::from_time();
         let mut list = self.list.clone();
         for i in (1..list.len()).rev() {
-            let j = rng.next() as usize % (i + 1);
+            let j = rng.next_below(i as u32 + 1) as usize;
             list.swap(i, j);
         }
         Self { list }
@@ -46,25 +58,4 @@ fn parse_words(content: &str) -> Vec<String> {
         .filter(|line| !line.is_empty())
         .map(str::to_owned)
         .collect()
-}
-
-struct XorShift(u64);
-
-impl XorShift {
-    fn from_time() -> Self {
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos() as u64)
-            .unwrap_or(0x9E37_79B9_7F4A_7C15);
-        Self(seed | 1)
-    }
-
-    fn next(&mut self) -> u32 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.0 = x;
-        (x & 0xFFFF_FFFF) as u32
-    }
 }

@@ -86,7 +86,10 @@ fn render_stats(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 Style::default().fg(Color::Blue),
             ),
         ]),
-        Line::from(format!("[{status}]   Tab: new test   Enter: finish   Esc: quit")),
+        Line::from(format!(
+            "[{status}]   {}   Tab: new test   Enter: finish   Esc: quit",
+            app.config.label()
+        )),
     ];
     let block = Block::default().title(" stats ").borders(Borders::ALL);
     frame.render_widget(

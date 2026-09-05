@@ -14,10 +14,10 @@ use crate::persistence::database::Database;
 use crate::stats::history::History;
 use crate::stats::live::LiveStats;
 use crate::typing::engine::Engine;
-use crate::typing::test::BACKSPACE_KEY;
-use crate::typing::test::TestMode;
-use crate::typing::words::Words;
+use crate::typing::generator::{Generator, TestConfig, WordPools};
+use crate::typing::test::{BACKSPACE_KEY, TestMode};
 use crate::ui;
+use crate::ui::config::ConfigMenu;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppState {
@@ -36,7 +36,11 @@ pub struct App {
     pub history: History,
     pub audio: AudioPlayer,
     pub engine: Engine,
-    pub words: Words,
+    pub config: TestConfig,
+    pub config_menu: ConfigMenu,
+    pub pools: WordPools,
+    pub generator: Generator,
+    pub missed_words: Vec<String>,
     pub live_stats: LiveStats,
     pub should_quit: bool,
 }
@@ -48,39 +52,67 @@ impl App {
         let database = Database::open()?;
         let history = database.load_history()?;
         let audio = AudioPlayer::new(&settings.audio)?;
-        let engine = Engine::new(TestMode::Time(Duration::from_secs(15)));
-        let mut app = Self {
-            state: AppState::Typing,
+        let config = TestConfig::default();
+        Ok(Self {
+            state: AppState::Menu,
             settings,
             keybindings,
             history,
             audio,
-            engine,
-            words: Words::builtin(),
+            engine: Engine::with_test(TestMode::Words(0), &[]),
+            config_menu: ConfigMenu::from_config(&config),
+            config,
+            pools: WordPools::default(),
+            generator: Generator::new(),
+            missed_words: Vec::new(),
             live_stats: LiveStats::default(),
             should_quit: false,
-        };
-        app.start_new_test();
-        Ok(app)
+        })
     }
 
     pub fn start_new_test(&mut self) {
         self.state = AppState::Typing;
-        let words = self.words.shuffled();
-        self.engine.restart(&words);
+        let (mode, words) = self.generator.generate(&self.config, &self.pools, &self.missed_words);
+        self.engine = Engine::with_test(mode, &words);
         self.live_stats = LiveStats::default();
+    }
+
+    fn collect_missed_words(&mut self) {
+        let test = &self.engine.test;
+        let mut missed: Vec<String> = test
+            .errors
+            .iter()
+            .filter_map(|error| test.word_at(error.position))
+            .collect();
+        missed.sort();
+        missed.dedup();
+        missed.truncate(50);
+        self.missed_words = missed;
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) {
         let now = Instant::now();
         match self.keybindings.handle(key) {
             Action::Quit => self.should_quit = true,
-            Action::Restart => self.start_new_test(),
+            Action::Restart => match self.state {
+                AppState::Typing => self.start_new_test(),
+                AppState::Results => self.open_config_menu(),
+                AppState::Menu => self.config_menu.select_start(),
+                _ => {}
+            },
             Action::Submit => match self.state {
                 AppState::Typing => self.engine.test.submit(now),
                 AppState::Results => self.start_new_test(),
+                AppState::Menu => {
+                    self.config = self.config_menu.apply();
+                    self.start_new_test();
+                }
                 _ => {}
             },
+            Action::MoveUp if self.state == AppState::Menu => self.config_menu.move_selection(-1),
+            Action::MoveDown if self.state == AppState::Menu => self.config_menu.move_selection(1),
+            Action::MoveLeft if self.state == AppState::Menu => self.config_menu.cycle(-1),
+            Action::MoveRight if self.state == AppState::Menu => self.config_menu.cycle(1),
             Action::Backspace if self.state == AppState::Typing => {
                 self.engine.handle_key(BACKSPACE_KEY, now);
             }
@@ -89,6 +121,11 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn open_config_menu(&mut self) {
+        self.config_menu = ConfigMenu::from_config(&self.config);
+        self.state = AppState::Menu;
     }
 
     pub fn poll_timeout(&self) -> Duration {
@@ -106,6 +143,7 @@ impl App {
             self.engine.test.tick(now);
             self.live_stats = LiveStats::calculate(&self.engine.test, now);
             if self.engine.test.is_finished() {
+                self.collect_missed_words();
                 self.state = AppState::Results;
             }
         }

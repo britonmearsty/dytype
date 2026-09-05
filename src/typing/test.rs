@@ -111,6 +111,22 @@ impl TypingTest {
         self.char_at(self.cursor)
     }
 
+    /// Returns the space-separated word token containing `position`, if any.
+    pub fn word_at(&self, position: usize) -> Option<String> {
+        if position >= self.chars.len() {
+            return None;
+        }
+        let start = self.chars[..position]
+            .iter()
+            .rposition(|&c| c == ' ')
+            .map_or(0, |i| i + 1);
+        let end = self.chars[position..]
+            .iter()
+            .position(|&c| c == ' ')
+            .map_or(self.chars.len(), |i| position + i);
+        Some(self.chars[start..end].iter().collect())
+    }
+
     pub fn is_running(&self) -> bool {
         self.status == TestStatus::Running
     }
@@ -406,5 +422,16 @@ mod tests {
         test.handle_key('x', Instant::now());
         assert_eq!(test.keystrokes.len(), keystrokes);
         assert_eq!(test.status, TestStatus::Finished);
+    }
+
+    #[test]
+    fn word_at_resolves_token_for_position() {
+        let test = TypingTest::new(TestMode::Words(2), &test_words());
+        assert_eq!(test.word_at(0), Some("foo".to_owned()));
+        assert_eq!(test.word_at(2), Some("foo".to_owned()));
+        assert_eq!(test.word_at(3), Some("foo".to_owned()));
+        assert_eq!(test.word_at(4), Some("bar".to_owned()));
+        assert_eq!(test.word_at(6), Some("bar".to_owned()));
+        assert_eq!(test.word_at(99), None);
     }
 }
