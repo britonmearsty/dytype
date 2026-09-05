@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::audio::player::AudioSettings;
+use crate::audio::settings::AudioSettings;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
     pub audio: AudioSettings,
@@ -73,11 +73,23 @@ impl Settings {
             Ok(Settings::default())
         }
     }
+
+    pub fn save(&self) -> std::io::Result<()> {
+        let path = Settings::file_path()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no config dir"))?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let content = toml::to_string(self)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        std::fs::write(path, content)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::settings::SoundPack;
 
     #[test]
     fn empty_toml_yields_defaults() {
@@ -98,5 +110,41 @@ mod tests {
     fn omitted_cursor_section_defaults() {
         let settings: Settings = toml::from_str("theme = \"dark\"\n").expect("parses");
         assert_eq!(settings.cursor, CursorSettings::default());
+    }
+
+    #[test]
+    fn old_audio_config_gains_new_fields_by_default() {
+        let settings: Settings = toml::from_str(
+            "[audio]\nenabled = true\nvolume = 1.0\nsound_pack = \"mechanical\"\n",
+        )
+        .expect("old audio config parses");
+        assert!(settings.audio.enabled);
+        assert_eq!(settings.audio.volume, 1.0);
+        assert_eq!(settings.audio.sound_pack, SoundPack::Mechanical);
+        assert!(settings.audio.error);
+        assert!(settings.audio.complete);
+    }
+
+    #[test]
+    fn sound_pack_parses_lowercase() {
+        for (pack, text) in [
+            (SoundPack::Mechanical, "mechanical"),
+            (SoundPack::Typewriter, "typewriter"),
+            (SoundPack::Soft, "soft"),
+            (SoundPack::Retro, "retro"),
+            (SoundPack::None, "none"),
+        ] {
+            let settings: Settings =
+                toml::from_str(&format!("[audio]\nsound_pack = \"{text}\"\n")).expect("parses");
+            assert_eq!(settings.audio.sound_pack, pack);
+        }
+    }
+
+    #[test]
+    fn settings_roundtrip_through_toml() {
+        let settings = Settings::default();
+        let encoded = toml::to_string(&settings).expect("serializes");
+        let decoded: Settings = toml::from_str(&encoded).expect("deserializes");
+        assert_eq!(decoded, settings);
     }
 }

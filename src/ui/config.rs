@@ -188,7 +188,7 @@ impl ConfigScreen {
         }
         lines.push(Line::from(""));
         lines.push(Line::from(
-            "   ↑/↓ move   ←/→ change   Enter start test   Esc quit",
+            "   ↑/↓ move   ←/→ change   Enter start test   F2 settings   Esc quit",
         ));
         let block = Block::default().title(" config ").borders(Borders::ALL);
         frame.render_widget(Paragraph::new(lines).block(block), area);

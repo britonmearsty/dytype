@@ -10,6 +10,7 @@ pub enum Action {
     MoveDown,
     MoveLeft,
     MoveRight,
+    Settings,
     Quit,
     Ignore,
 }
@@ -35,6 +36,7 @@ impl Keybindings {
             KeyCode::Down => Action::MoveDown,
             KeyCode::Left => Action::MoveLeft,
             KeyCode::Right => Action::MoveRight,
+            KeyCode::F(2) => Action::Settings,
             KeyCode::Esc => Action::Quit,
             _ => Action::Ignore,
         }
@@ -57,6 +59,12 @@ mod tests {
         assert_eq!(binds.handle(&event(KeyCode::Down)), Action::MoveDown);
         assert_eq!(binds.handle(&event(KeyCode::Left)), Action::MoveLeft);
         assert_eq!(binds.handle(&event(KeyCode::Right)), Action::MoveRight);
+    }
+
+    #[test]
+    fn f2_opens_settings() {
+        let binds = Keybindings::load().unwrap();
+        assert_eq!(binds.handle(&event(KeyCode::F(2))), Action::Settings);
     }
 
     #[test]

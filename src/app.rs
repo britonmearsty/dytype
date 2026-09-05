@@ -8,7 +8,8 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use crate::animation::Animations;
-use crate::audio::player::AudioPlayer;
+use crate::audio::event::SoundEvent;
+use crate::audio::manager::AudioManager;
 use crate::config::settings::Settings;
 use crate::input::keybindings::{Action, Keybindings};
 use crate::persistence::database::Database;
@@ -19,6 +20,7 @@ use crate::typing::generator::{Generator, TestConfig, WordPools};
 use crate::typing::test::{BACKSPACE_KEY, TestMode};
 use crate::ui;
 use crate::ui::config::ConfigMenu;
+use crate::ui::settings::SettingsMenu;
 
 const FRAME_DURATION: Duration = Duration::from_millis(16);
 
@@ -37,16 +39,20 @@ pub struct App {
     pub settings: Settings,
     pub keybindings: Keybindings,
     pub history: History,
-    pub audio: AudioPlayer,
+    pub audio: AudioManager,
     pub engine: Engine,
     pub config: TestConfig,
     pub config_menu: ConfigMenu,
+    pub settings_menu: SettingsMenu,
     pub pools: WordPools,
     pub generator: Generator,
     pub missed_words: Vec<String>,
     pub live_stats: LiveStats,
     pub anim: Animations,
     pub should_quit: bool,
+    sounds_seen: usize,
+    sounds_words: usize,
+    sounds_finished: bool,
 }
 
 impl App {
@@ -55,8 +61,9 @@ impl App {
         let keybindings = Keybindings::load()?;
         let database = Database::open()?;
         let history = database.load_history()?;
-        let audio = AudioPlayer::new(&settings.audio)?;
+        let audio = AudioManager::new(&settings.audio)?;
         let config = TestConfig::default();
+        let settings_menu = SettingsMenu::from_settings(&settings);
         Ok(Self {
             state: AppState::Menu,
             settings,
@@ -65,6 +72,7 @@ impl App {
             audio,
             engine: Engine::with_test(TestMode::Words(0), &[]),
             config_menu: ConfigMenu::from_config(&config),
+            settings_menu,
             config,
             pools: WordPools::default(),
             generator: Generator::new(),
@@ -72,6 +80,9 @@ impl App {
             live_stats: LiveStats::default(),
             anim: Animations::new(),
             should_quit: false,
+            sounds_seen: 0,
+            sounds_words: 0,
+            sounds_finished: false,
         })
     }
 
@@ -81,6 +92,9 @@ impl App {
         self.engine = Engine::with_test(mode, &words);
         self.live_stats = LiveStats::default();
         self.anim.mark_test_start(Instant::now());
+        self.sounds_seen = 0;
+        self.sounds_words = 0;
+        self.sounds_finished = false;
     }
 
     fn collect_missed_words(&mut self) {
@@ -99,7 +113,10 @@ impl App {
     pub fn handle_key(&mut self, key: &KeyEvent) {
         let now = Instant::now();
         match self.keybindings.handle(key) {
-            Action::Quit => self.should_quit = true,
+            Action::Quit => match self.state {
+                AppState::Settings => self.open_config_menu(),
+                _ => self.should_quit = true,
+            },
             Action::Restart => match self.state {
                 AppState::Typing => self.start_new_test(),
                 AppState::Results => self.open_config_menu(),
@@ -107,18 +124,48 @@ impl App {
                 _ => {}
             },
             Action::Submit => match self.state {
-                AppState::Typing => self.engine.test.submit(now),
+                AppState::Typing => {
+                    self.engine.test.submit(now);
+                    self.dispatch_typing_sounds();
+                }
                 AppState::Results => self.start_new_test(),
                 AppState::Menu => {
                     self.config = self.config_menu.apply();
                     self.start_new_test();
                 }
+                AppState::Settings => self.open_config_menu(),
                 _ => {}
             },
-            Action::MoveUp if self.state == AppState::Menu => self.config_menu.move_selection(-1),
-            Action::MoveDown if self.state == AppState::Menu => self.config_menu.move_selection(1),
-            Action::MoveLeft if self.state == AppState::Menu => self.config_menu.cycle(-1),
-            Action::MoveRight if self.state == AppState::Menu => self.config_menu.cycle(1),
+            Action::Settings => match self.state {
+                AppState::Menu | AppState::Results => self.open_settings(),
+                _ => {}
+            },
+            Action::MoveUp => match self.state {
+                AppState::Menu => self.config_menu.move_selection(-1),
+                AppState::Settings => self.settings_menu.move_selection(-1),
+                _ => {}
+            },
+            Action::MoveDown => match self.state {
+                AppState::Menu => self.config_menu.move_selection(1),
+                AppState::Settings => self.settings_menu.move_selection(1),
+                _ => {}
+            },
+            Action::MoveLeft => match self.state {
+                AppState::Menu => self.config_menu.cycle(-1),
+                AppState::Settings => {
+                    self.settings_menu.cycle(-1);
+                    self.commit_settings();
+                }
+                _ => {}
+            },
+            Action::MoveRight => match self.state {
+                AppState::Menu => self.config_menu.cycle(1),
+                AppState::Settings => {
+                    self.settings_menu.cycle(1);
+                    self.commit_settings();
+                }
+                _ => {}
+            },
             Action::Backspace if self.state == AppState::Typing => {
                 self.engine.handle_key(BACKSPACE_KEY, now);
                 self.anim.observe(&self.engine.test, now);
@@ -126,9 +173,54 @@ impl App {
             Action::TypeChar(c) if self.state == AppState::Typing => {
                 self.engine.handle_key(c, now);
                 self.anim.observe(&self.engine.test, now);
+                self.dispatch_typing_sounds();
             }
             _ => {}
         }
+    }
+
+    fn open_settings(&mut self) {
+        self.settings_menu = SettingsMenu::from_settings(&self.settings);
+        self.state = AppState::Settings;
+    }
+
+    fn commit_settings(&mut self) {
+        self.settings.audio = self.settings_menu.apply();
+        self.audio.reconfigure(&self.settings.audio);
+        if let Err(error) = self.settings.save() {
+            eprintln!("warning: failed to save settings: {error}");
+        }
+    }
+
+    fn dispatch_typing_sounds(&mut self) {
+        let events = self.collect_sound_events();
+        self.sounds_seen = self.engine.test.keystrokes.len();
+        self.sounds_words = self.engine.test.completed_words();
+        self.sounds_finished = self.engine.test.is_finished();
+        let audio = &self.settings.audio;
+        for event in events {
+            self.audio.emit(event, audio);
+        }
+    }
+
+    fn collect_sound_events(&self) -> Vec<SoundEvent> {
+        let test = &self.engine.test;
+        let mut events = Vec::new();
+        let focus = self.sounds_seen.min(test.keystrokes.len());
+        for stroke in &test.keystrokes[focus..] {
+            events.push(if stroke.correct {
+                SoundEvent::Keypress
+            } else {
+                SoundEvent::Error
+            });
+        }
+        if test.completed_words() > self.sounds_words {
+            events.push(SoundEvent::WordComplete);
+        }
+        if test.is_finished() && !self.sounds_finished {
+            events.push(SoundEvent::TestComplete);
+        }
+        events
     }
 
     fn open_config_menu(&mut self) {
@@ -150,6 +242,7 @@ impl App {
         self.anim.update(now);
         if self.state == AppState::Typing {
             self.engine.test.tick(now);
+            self.dispatch_typing_sounds();
             self.live_stats = LiveStats::calculate(&self.engine.test, now);
             if self.engine.test.is_finished() {
                 self.collect_missed_words();
