@@ -72,22 +72,33 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: &KeyEvent) {
+        let now = Instant::now();
         match self.keybindings.handle(key) {
             Action::Quit => self.should_quit = true,
             Action::Restart => self.start_new_test(),
             Action::Submit => match self.state {
-                AppState::Typing => self.engine.test.submit(Instant::now()),
+                AppState::Typing => self.engine.test.submit(now),
                 AppState::Results => self.start_new_test(),
                 _ => {}
             },
             Action::Backspace if self.state == AppState::Typing => {
-                self.engine.handle_key(BACKSPACE_KEY);
+                self.engine.handle_key(BACKSPACE_KEY, now);
             }
             Action::TypeChar(c) if self.state == AppState::Typing => {
-                self.engine.handle_key(c);
+                self.engine.handle_key(c, now);
             }
             _ => {}
         }
+    }
+
+    pub fn poll_timeout(&self) -> Duration {
+        if self.state == AppState::Typing
+            && let Some(deadline) = self.engine.test.deadline()
+        {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            return remaining.min(Duration::from_millis(100));
+        }
+        Duration::from_millis(50)
     }
 
     pub fn tick(&mut self, now: Instant) {

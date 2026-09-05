@@ -22,8 +22,9 @@ pub enum CharState {
 
 #[derive(Debug, Clone)]
 pub struct Keystroke {
-    pub key: char,
     pub position: usize,
+    pub expected: char,
+    pub actual: char,
     pub correct: bool,
     pub timestamp: Instant,
 }
@@ -56,6 +57,10 @@ const BACKSPACE: char = '\u{0008}';
 const DELETE: char = '\u{007f}';
 
 pub const BACKSPACE_KEY: char = BACKSPACE;
+
+fn char_to_optional(ch: char) -> Option<char> {
+    (ch != '\0').then_some(ch)
+}
 
 impl TypingTest {
     pub fn new(mode: TestMode, words: &[String]) -> Self {
@@ -133,6 +138,13 @@ impl TypingTest {
             .unwrap_or_default()
     }
 
+    pub fn deadline(&self) -> Option<Instant> {
+        match self.mode {
+            TestMode::Time(duration) => self.started_at.map(|start| start + duration),
+            TestMode::Words(_) => None,
+        }
+    }
+
     pub fn handle_key(&mut self, key: char, now: Instant) {
         if self.status == TestStatus::Finished {
             return;
@@ -169,8 +181,9 @@ impl TypingTest {
         self.states[position] = CharState::Correct;
         self.correct_chars += 1;
         self.keystrokes.push(Keystroke {
-            key,
             position,
+            expected: self.chars[position],
+            actual: key,
             correct: true,
             timestamp: now,
         });
@@ -182,16 +195,17 @@ impl TypingTest {
         if position < self.chars.len() {
             self.states[position] = CharState::Incorrect;
         }
-        let expected = self.char_at(position);
+        let expected = self.char_at(position).unwrap_or('\0');
         self.incorrect_chars += 1;
         self.errors.push(TypingError {
             position,
-            expected,
+            expected: char_to_optional(expected),
             actual: key,
         });
         self.keystrokes.push(Keystroke {
-            key,
             position,
+            expected,
+            actual: key,
             correct: false,
             timestamp: now,
         });
@@ -214,9 +228,14 @@ impl TypingTest {
             TestMode::Words(count) => self.completed_words() >= count,
             TestMode::Time(duration) => self.elapsed(now) >= duration,
         };
-        if finished {
-            self.finish(now);
+        if !finished {
+            return;
         }
+        let finish_at = match self.mode {
+            TestMode::Time(duration) => self.started_at.map_or(now, |start| start + duration),
+            TestMode::Words(_) => now,
+        };
+        self.finish(finish_at);
     }
 
     fn finish(&mut self, now: Instant) {
@@ -335,6 +354,34 @@ mod tests {
     }
 
     #[test]
+    fn keystrokes_record_expected_actual_and_timestamp() {
+        let mut test = TypingTest::new(TestMode::Words(2), &test_words());
+        let now = Instant::now();
+        test.handle_key('x', now);
+        let stroke = &test.keystrokes[0];
+        assert_eq!(stroke.position, 0);
+        assert_eq!(stroke.expected, 'f');
+        assert_eq!(stroke.actual, 'x');
+        assert!(!stroke.correct);
+        assert_eq!(stroke.timestamp, now);
+    }
+
+    #[test]
+    fn time_mode_reports_deadline_after_start() {
+        let now = Instant::now();
+        let mut test = TypingTest::new(TestMode::Time(Duration::from_secs(30)), &test_words());
+        assert_eq!(test.deadline(), None);
+        test.handle_key('f', now);
+        assert_eq!(test.deadline(), Some(now + Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn word_mode_has_no_deadline() {
+        let test = TypingTest::new(TestMode::Words(2), &test_words());
+        assert_eq!(test.deadline(), None);
+    }
+
+    #[test]
     fn time_mode_finishes_after_duration() {
         let start = Instant::now();
         let mut test = TypingTest::new(
@@ -347,7 +394,8 @@ mod tests {
         assert_eq!(test.status, TestStatus::Running);
         test.tick(start + Duration::from_millis(1200));
         assert_eq!(test.status, TestStatus::Finished);
-        assert_eq!(test.duration, Some(Duration::from_millis(1200)));
+        assert_eq!(test.duration, Some(Duration::from_secs(1)));
+        assert_eq!(test.finished_at, Some(start + Duration::from_secs(1)));
     }
 
     #[test]

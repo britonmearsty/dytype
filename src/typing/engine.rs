@@ -20,8 +20,8 @@ impl Engine {
         }
     }
 
-    pub fn handle_key(&mut self, key: char) {
-        self.test.handle_key(key, Instant::now());
+    pub fn handle_key(&mut self, key: char, now: Instant) {
+        self.test.handle_key(key, now);
     }
 
     pub fn restart(&mut self, words: &Words) {
@@ -30,15 +30,15 @@ impl Engine {
     }
 }
 
+impl Default for Engine {
+    fn default() -> Self {
+        Self::new(TestMode::Time(Duration::from_secs(15)))
+    }
+}
+
 fn selected_words(mode: TestMode, words: &Words) -> Vec<String> {
     match mode {
         TestMode::Words(count) => words.list.iter().take(count).cloned().collect(),
         TestMode::Time(_) => words.list.clone(),
-    }
-}
-
-impl Default for Engine {
-    fn default() -> Self {
-        Self::new(TestMode::Time(Duration::from_secs(15)))
     }
 }

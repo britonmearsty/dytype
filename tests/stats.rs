@@ -40,16 +40,18 @@ fn consistency_drops_with_unstable_pace() {
     let mut strokes = Vec::new();
     for i in 0..10 {
         strokes.push(Keystroke {
-            key: 'a',
             position: i,
+            expected: 'a',
+            actual: 'a',
             correct: true,
             timestamp: start + Duration::from_millis((100 * i) as u64),
         });
     }
     for i in 0..5 {
         strokes.push(Keystroke {
-            key: 'a',
             position: 10 + i,
+            expected: 'a',
+            actual: 'a',
             correct: true,
             timestamp: start + Duration::from_secs(10) + Duration::from_millis((100 * i) as u64),
         });

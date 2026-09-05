@@ -1,5 +1,5 @@
 use std::io;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crossterm::event;
 use ratatui::Frame;
@@ -24,7 +24,7 @@ pub fn run_event_loop(
     app: &mut App,
 ) -> io::Result<()> {
     loop {
-        if event::poll(Duration::from_millis(50))?
+        if event::poll(app.poll_timeout())?
             && let event::Event::Key(key) = event::read()?
         {
             app.handle_key(&key);
