@@ -15,11 +15,13 @@ use crate::input::keybindings::{Action, Keybindings};
 use crate::persistence::database::Database;
 use crate::stats::history::History;
 use crate::stats::live::LiveStats;
+use crate::stats::result::TestResult;
 use crate::typing::engine::Engine;
 use crate::typing::generator::{Generator, TestConfig, WordPools};
 use crate::typing::test::{BACKSPACE_KEY, TestMode};
 use crate::ui;
 use crate::ui::config::ConfigMenu;
+use crate::ui::history::HistoryTab;
 use crate::ui::settings::SettingsMenu;
 
 const FRAME_DURATION: Duration = Duration::from_millis(16);
@@ -39,6 +41,7 @@ pub struct App {
     pub settings: Settings,
     pub keybindings: Keybindings,
     pub history: History,
+    pub history_tab: HistoryTab,
     pub audio: AudioManager,
     pub engine: Engine,
     pub config: TestConfig,
@@ -49,6 +52,7 @@ pub struct App {
     pub missed_words: Vec<String>,
     pub live_stats: LiveStats,
     pub anim: Animations,
+    pub db: Database,
     pub should_quit: bool,
     sounds_seen: usize,
     sounds_words: usize,
@@ -69,6 +73,7 @@ impl App {
             settings,
             keybindings,
             history,
+            history_tab: HistoryTab::default(),
             audio,
             engine: Engine::with_test(TestMode::Words(0), &[]),
             config_menu: ConfigMenu::from_config(&config),
@@ -79,6 +84,7 @@ impl App {
             missed_words: Vec::new(),
             live_stats: LiveStats::default(),
             anim: Animations::new(),
+            db: database,
             should_quit: false,
             sounds_seen: 0,
             sounds_words: 0,
@@ -114,13 +120,14 @@ impl App {
         let now = Instant::now();
         match self.keybindings.handle(key) {
             Action::Quit => match self.state {
-                AppState::Settings => self.open_config_menu(),
+                AppState::Settings | AppState::History => self.open_config_menu(),
                 _ => self.should_quit = true,
             },
             Action::Restart => match self.state {
                 AppState::Typing => self.start_new_test(),
                 AppState::Results => self.open_config_menu(),
                 AppState::Menu => self.config_menu.select_start(),
+                AppState::History => self.open_config_menu(),
                 _ => {}
             },
             Action::Submit => match self.state {
@@ -134,10 +141,15 @@ impl App {
                     self.start_new_test();
                 }
                 AppState::Settings => self.open_config_menu(),
+                AppState::History => self.start_new_test(),
                 _ => {}
             },
             Action::Settings => match self.state {
-                AppState::Menu | AppState::Results => self.open_settings(),
+                AppState::Menu | AppState::Results | AppState::History => self.open_settings(),
+                _ => {}
+            },
+            Action::History => match self.state {
+                AppState::Menu | AppState::Results => self.state = AppState::History,
                 _ => {}
             },
             Action::MoveUp => match self.state {
@@ -156,6 +168,7 @@ impl App {
                     self.settings_menu.cycle(-1);
                     self.commit_settings();
                 }
+                AppState::History => self.history_tab = self.history_tab.cycle(-1),
                 _ => {}
             },
             Action::MoveRight => match self.state {
@@ -164,6 +177,7 @@ impl App {
                     self.settings_menu.cycle(1);
                     self.commit_settings();
                 }
+                AppState::History => self.history_tab = self.history_tab.cycle(1),
                 _ => {}
             },
             Action::Backspace if self.state == AppState::Typing => {
@@ -246,6 +260,7 @@ impl App {
             self.live_stats = LiveStats::calculate(&self.engine.test, now);
             if self.engine.test.is_finished() {
                 self.collect_missed_words();
+                self.record_result(now);
                 self.anim.results.start(
                     self.live_stats.wpm as f32,
                     self.live_stats.raw_wpm as f32,
@@ -255,6 +270,15 @@ impl App {
                 );
                 self.state = AppState::Results;
             }
+        }
+    }
+
+    fn record_result(&mut self, now: Instant) {
+        let id = self.history.next_id();
+        let result = TestResult::build(id, &self.engine.test, self.config.difficulty, now);
+        self.history.push(result.clone());
+        if let Err(error) = self.db.append(&result) {
+            eprintln!("warning: failed to save test result: {error}");
         }
     }
 }

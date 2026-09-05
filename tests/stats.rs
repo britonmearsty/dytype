@@ -105,16 +105,31 @@ fn history_pushes_results() {
 #[cfg(test)]
 mod sample {
     use dytype::stats::history::TestResult;
+    use dytype::typing::generator::Difficulty;
+    use dytype::typing::test::TestMode;
 
     pub fn sample_result() -> TestResult {
         TestResult {
+            id: 1,
+            timestamp: 1,
             wpm: 60.0,
-            raw: 70.0,
+            raw_wpm: 70.0,
             accuracy: 95.0,
+            error_rate: 5.0,
             consistency: 90.0,
-            mode: "time".to_owned(),
-            characters: 300,
-            timestamp: 0,
+            cpm: 300.0,
+            characters: 60,
+            correct_chars: 57,
+            incorrect_chars: 3,
+            errors: 3,
+            correct_keystrokes: 57,
+            incorrect_keystrokes: 3,
+            completed_words: 10,
+            avg_key_interval_ms: 100,
+            duration_ms: 5000,
+            mode: TestMode::Time(std::time::Duration::from_secs(60)),
+            difficulty: Difficulty::Normal,
+            char_stats: Vec::new(),
         }
     }
 }

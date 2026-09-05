@@ -1,34 +1,22 @@
-use serde::{Deserialize, Serialize};
+pub use crate::stats::result::TestResult;
 
-#[derive(Serialize, Deserialize)]
-pub struct TestResult {
-    pub wpm: f64,
-    pub raw: f64,
-    pub accuracy: f64,
-    pub consistency: f64,
-    pub mode: String,
-    pub characters: usize,
-    pub timestamp: u64,
-}
-
+/// In-memory store of every completed test, in insertion order.
+#[derive(Debug, Clone, Default)]
 pub struct History {
     pub results: Vec<TestResult>,
 }
 
 impl History {
     pub fn new() -> Self {
-        Self {
-            results: Vec::new(),
-        }
+        Self::default()
     }
 
     pub fn push(&mut self, result: TestResult) {
         self.results.push(result);
     }
-}
 
-impl Default for History {
-    fn default() -> Self {
-        Self::new()
+    /// The id to assign to the next recorded test.
+    pub fn next_id(&self) -> u64 {
+        self.results.iter().map(|r| r.id).max().unwrap_or(0) + 1
     }
 }

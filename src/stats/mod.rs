@@ -1,5 +1,10 @@
 pub mod accuracy;
+pub mod analysis;
+pub mod calendar;
+pub mod chart;
 pub mod consistency;
 pub mod history;
 pub mod live;
+pub mod progress;
+pub mod result;
 pub mod wpm;

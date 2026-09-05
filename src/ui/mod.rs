@@ -14,7 +14,7 @@ pub mod typing;
 pub mod widgets;
 
 pub use config::ConfigScreen;
-pub use history::HistoryScreen;
+pub use history::{HistoryScreen, HistoryTab};
 pub use results::ResultsScreen;
 pub use settings::SettingsScreen;
 pub use typing::TypingScreen;
