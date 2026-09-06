@@ -144,6 +144,10 @@ impl CharEffects {
             .retain(|e| now.saturating_duration_since(e.start) < EFFECT_LIFETIME);
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty()
+    }
+
     /// Returns `(kind, progress)` where progress is `0.0` just after
     /// triggering and approaches `1.0` as the effect expires.
     pub fn progress(&self, index: usize, now: Instant) -> Option<(EffectKind, f32)> {
@@ -202,6 +206,13 @@ impl ResultsAnimation {
 
     pub fn title_alpha(&self, now: Instant) -> f32 {
         self.title.map_or(0.0, |t| t.value(now))
+    }
+
+    /// True while any results tween is still running.
+    pub fn is_active(&self, now: Instant) -> bool {
+        let active = |tween: &Option<Tween>| tween.is_some_and(|t| !t.finished(now));
+        active(&self.wpm) || active(&self.raw) || active(&self.accuracy) || active(&self.consistency)
+            || active(&self.title)
     }
 }
 
@@ -306,6 +317,17 @@ impl Animations {
 
     pub fn word_landing(&self, now: Instant) -> f32 {
         self.word_landing.map_or(0.0, |t| t.value(now))
+    }
+
+    /// True while anything visual is still moving, so the event loop knows a
+    /// redraw is required. When this is false (idle menu, finished results)
+    /// the frame can be skipped entirely.
+    pub fn is_active(&self, now: Instant) -> bool {
+        let cursor_settled = (self.cursor.current_x - self.cursor.target_x).abs() < 0.03;
+        !cursor_settled
+            || !self.char_effects.is_empty()
+            || self.word_landing.is_some()
+            || self.results.is_active(now)
     }
 }
 
@@ -458,6 +480,41 @@ mod tests {
         assert_eq!(consistency, 88.0);
         assert_eq!(results.title_alpha(start + Duration::from_secs(1)), 1.0);
         assert_eq!(results.title_alpha(start), 0.0);
+    }
+
+    #[test]
+    fn idle_animations_report_inactive_for_redraw_skipping() {
+        let start = base();
+        let mut anim = Animations::new();
+        anim.mark_test_start(start);
+        // Fresh, settled state: nothing moving, frame can be skipped.
+        assert!(!anim.is_active(start));
+        anim.update(start + Duration::from_millis(16));
+        assert!(!anim.is_active(start + Duration::from_millis(16)));
+    }
+
+    #[test]
+    fn running_animations_report_active_for_redraw() {
+        let start = base();
+        let mut anim = Animations::new();
+        anim.mark_test_start(start);
+        // A moving cursor target keeps frames alive.
+        anim.set_cursor_target(5);
+        assert!(anim.is_active(start));
+        anim.snap_cursor();
+        assert!(!anim.is_active(start));
+        // Char effects and results tweens also demand frames.
+        let words = vec!["foo".to_owned()];
+        let mut test = TypingTest::new(crate::typing::test::TestMode::Words(1), &words);
+        test.handle_key('f', start);
+        anim.observe(&test, start);
+        assert!(anim.is_active(start));
+        anim.results.start(10.0, 12.0, 90.0, 80.0, start);
+        assert!(anim.is_active(start));
+        // After effects are pruned and tweens finish, frames can stop.
+        let later = start + Duration::from_secs(2);
+        anim.update(later);
+        assert!(!anim.is_active(later));
     }
 
     #[test]

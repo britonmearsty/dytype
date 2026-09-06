@@ -18,10 +18,10 @@ impl AudioManager {
     fn build_backend(settings: &SoundSettings) -> Box<dyn SoundBackend> {
         if settings.sound_pack == SoundPack::None {
             Box::new(SilentBackend)
-        } else if let Some(backend) = WaveBackend::new(settings.sound_pack) {
-            Box::new(backend)
         } else {
-            Box::new(SilentBackend)
+            // Player detection is lazy (first play), so creating the backend
+            // never probes subprocesses during startup.
+            Box::new(WaveBackend::new(settings.sound_pack))
         }
     }
 

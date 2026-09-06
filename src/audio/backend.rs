@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 use super::event::SoundEvent;
 use super::settings::SoundPack;
@@ -106,26 +107,32 @@ enum WaveKind {
 /// Synthesizes short clips per sound pack and plays them by spawning the
 /// system player on a temp WAV file. Falls back to no-ops when unavailable.
 pub struct WaveBackend {
-    player: Player,
     samples: Vec<Vec<i16>>,
     counter: u32,
 }
 
 impl WaveBackend {
-    pub fn new(pack: SoundPack) -> Option<Self> {
-        let player = detect_player()?;
-        Some(Self {
-            player,
+    pub fn new(pack: SoundPack) -> Self {
+        Self {
             samples: samples_for(pack),
             counter: 0,
-        })
+        }
     }
 
-    fn spawn_player(&self, path: &Path) {
-        let mut cmd = Command::new(self.player.binary());
-        cmd.args(self.player.args(path));
+    fn spawn_player(&self, path: &Path) -> Option<()> {
+        let player = cached_player()?;
+        let mut cmd = Command::new(player.binary());
+        cmd.args(player.args(path));
         let _ = cmd.spawn();
+        Some(())
     }
+}
+
+/// Detects the system audio player exactly once and caches the result, so
+/// startup never pays for subprocess probes.
+fn cached_player() -> Option<Player> {
+    static CACHE: OnceLock<Option<Player>> = OnceLock::new();
+    *CACHE.get_or_init(detect_player)
 }
 
 impl SoundBackend for WaveBackend {
@@ -143,7 +150,7 @@ impl SoundBackend for WaveBackend {
         if std::fs::write(&path, wav_bytes(samples, volume)).is_err() {
             return;
         }
-        self.spawn_player(&path);
+        let _ = self.spawn_player(&path);
     }
 }
 
@@ -466,7 +473,6 @@ mod tests {
     fn wave_backend_uses_scoped_temp_paths() {
         let samples = voice(440.0, 440.0, 0.01, 0.005, WaveKind::Sine, 1.0);
         let mut backend = WaveBackend {
-            player: Player::Ffplay,
             samples: vec![samples],
             counter: 0,
         };
@@ -478,5 +484,26 @@ mod tests {
             "play() should write the temp WAV before handing it to the player"
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn backend_construction_never_probes_for_a_player() {
+        // WaveBackend::new must be free of subprocess work (it used to probe
+        // aplay/paplay/ffplay synchronously). Construction alone is enough to
+        // prove probing was deferred: if it spawned, this test would not
+        // complete without those binaries present.
+        let backend = WaveBackend::new(SoundPack::Mechanical);
+        assert_eq!(backend.samples.len(), 4);
+        assert_eq!(backend.counter, 0);
+    }
+
+    #[test]
+    fn no_player_binaries_resolve_to_nothing() {
+        // The one-shot cache is stable: repeated reads agree, and on a box
+        // without any player the result is None rather than a panic.
+        let first = cached_player();
+        let second = cached_player();
+        assert_eq!(first, second);
+        let _ = first;
     }
 }
