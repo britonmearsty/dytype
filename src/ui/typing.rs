@@ -21,15 +21,27 @@ enum CursorGlyph {
 
 pub struct TypingScreen;
 
+fn stats_height(height: u16) -> u16 {
+    if height >= 24 { 5 }
+    else if height >= 14 { 3 }
+    else { 0 }
+}
+
 impl TypingScreen {
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect, app: &App) {
         if app.settings.display.compact_mode {
             render_prompt(frame, area, app);
             return;
         }
-        let chunks = Layout::vertical([Constraint::Min(3), Constraint::Length(5)]).split(area);
-        render_prompt(frame, chunks[0], app);
-        render_stats(frame, chunks[1], app);
+        let stats_h = stats_height(area.height);
+        if stats_h == 0 {
+            render_prompt(frame, area, app);
+        } else {
+            let chunks = Layout::vertical([Constraint::Min(3), Constraint::Length(stats_h)])
+                .split(area);
+            render_prompt(frame, chunks[0], app);
+            render_stats(frame, chunks[1], app);
+        }
     }
 }
 
@@ -108,6 +120,7 @@ fn render_prompt(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
 fn render_stats(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let ls = app.live_stats;
+    let theme = app.theme;
     let status = if app.engine.test.is_paused() {
         "paused — ctrl+p to resume"
     } else {
@@ -117,42 +130,74 @@ fn render_stats(frame: &mut Frame<'_>, area: Rect, app: &App) {
             TestStatus::Finished => "complete",
         }
     };
-    let theme = app.theme;
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(
-                format!("{:.0} WPM", ls.wpm),
-                Style::default().fg(theme.correct).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(format!("   Raw: {:.0}", ls.raw_wpm), Style::default().fg(theme.accent)),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("Accuracy: {:.1}%", ls.accuracy), Style::default().fg(theme.text)),
-            Span::styled(
-                format!("   Consistency: {:.0}%", ls.consistency),
-                Style::default().fg(theme.accent),
-            ),
-            Span::styled(
-                format!("   Time: {:.1}s", ls.elapsed.as_secs_f64()),
-                Style::default().fg(theme.muted),
-            ),
-        ]),
-        Line::from(Span::styled(
-            format!(
-                "[{status}]   {}   Tab: new test   Enter: finish   Esc: quit",
-                app.config.label()
-            ),
-            Style::default().fg(theme.muted),
-        )),
-    ];
-    let block = Block::default()
-        .title(" stats ")
-        .borders(Borders::ALL)
-        .style(Style::default().bg(theme.background));
-    frame.render_widget(
-        Paragraph::new(lines).block(block).alignment(ratatui::layout::Alignment::Center),
-        area,
+    let hints = format!(
+        "[{status}]   {}   Tab: new test   Enter: finish   Esc: quit",
+        app.config.label()
     );
+
+    if area.height >= 5 {
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(
+                    format!("{:.0} WPM", ls.wpm),
+                    Style::default().fg(theme.correct).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("   Raw: {:.0}", ls.raw_wpm),
+                    Style::default().fg(theme.accent),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    format!("Accuracy: {:.1}%", ls.accuracy),
+                    Style::default().fg(theme.text),
+                ),
+                Span::styled(
+                    format!("   Consistency: {:.0}%", ls.consistency),
+                    Style::default().fg(theme.accent),
+                ),
+                Span::styled(
+                    format!("   Time: {:.1}s", ls.elapsed.as_secs_f64()),
+                    Style::default().fg(theme.muted),
+                ),
+            ]),
+            Line::from(Span::styled(hints, Style::default().fg(theme.muted))),
+        ];
+        let block = Block::default()
+            .title(" stats ")
+            .borders(Borders::ALL)
+            .style(Style::default().bg(theme.background));
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(block)
+                .alignment(ratatui::layout::Alignment::Center),
+            area,
+        );
+    } else if area.height >= 3 {
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(
+                    format!("{:.0} WPM", ls.wpm),
+                    Style::default().fg(theme.correct).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("   Accuracy: {:.1}%", ls.accuracy),
+                    Style::default().fg(theme.text),
+                ),
+                Span::styled(
+                    format!("   Time: {:.1}s", ls.elapsed.as_secs_f64()),
+                    Style::default().fg(theme.muted),
+                ),
+            ]),
+            Line::from(Span::styled(hints, Style::default().fg(theme.muted))),
+        ];
+        frame.render_widget(
+            Paragraph::new(lines)
+                .style(Style::default().bg(theme.background))
+                .alignment(ratatui::layout::Alignment::Center),
+            area,
+        );
+    }
 }
 
 fn char_style(state: CharState, effect: Option<(EffectKind, f32)>, theme: Theme) -> Style {
@@ -318,5 +363,30 @@ mod tests {
         assert_eq!(bar_ramp(0.0), '▏');
         assert_eq!(bar_ramp(1.0), '█');
         assert_eq!(bar_ramp(0.5), '▋');
+    }
+
+    #[test]
+    fn stats_height_adapts_to_terminal_height() {
+        assert_eq!(stats_height(80), 5);
+        assert_eq!(stats_height(24), 5);
+        assert_eq!(stats_height(23), 3);
+        assert_eq!(stats_height(14), 3);
+        assert_eq!(stats_height(13), 0);
+        assert_eq!(stats_height(10), 0);
+    }
+
+    #[test]
+    fn prompt_and_stats_split_leave_room_at_each_size() {
+        for (height, expected_stats) in [(80, 5u16), (24, 5), (23, 3), (14, 3)] {
+            let area = Rect::new(0, 0, 80, height);
+            let chunks = Layout::vertical([
+                Constraint::Min(3),
+                Constraint::Length(stats_height(height)),
+            ])
+            .split(area);
+            assert_eq!(chunks[1].height, expected_stats, "height={height}");
+            assert_eq!(chunks[0].height + chunks[1].height, height);
+            assert!(chunks[0].height >= 3, "prompt shrinks past min at height={height}");
+        }
     }
 }

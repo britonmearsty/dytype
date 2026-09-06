@@ -22,7 +22,12 @@ const TABS: [HistoryTab; 5] = [
 ];
 
 const CHART_WIDTH_FLOOR: usize = 12;
-const CHART_HEIGHT: usize = 7;
+
+fn chart_height(area: Rect) -> usize {
+    if area.height >= 24 { 7 }
+    else if area.height >= 16 { 5 }
+    else { 3 }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HistoryTab {
@@ -217,7 +222,7 @@ impl HistoryScreen {
 
         lines.push(section("wpm over time", theme));
         let series = analysis::wpm_series(results);
-        for row in chart::line_chart(&series, width, CHART_HEIGHT) {
+        for row in chart::line_chart(&series, width, chart_height(area)) {
             lines.push(Line::from(format!("  {row}")));
         }
         lines.push(Line::from(format!(
@@ -254,7 +259,7 @@ impl HistoryScreen {
 
         lines.push(section("accuracy over time", theme));
         let accuracy = analysis::accuracy_series(results);
-        for row in chart::line_chart(&accuracy, width, CHART_HEIGHT) {
+        for row in chart::line_chart(&accuracy, width, chart_height(area)) {
             lines.push(Line::from(format!("  {row}")));
         }
         let summary = analysis::summarize(results);
@@ -268,7 +273,7 @@ impl HistoryScreen {
         lines.push(Line::from(""));
         lines.push(section("consistency over time", theme));
         let consistency = analysis::consistency_series(results);
-        for row in chart::line_chart(&consistency, width, CHART_HEIGHT) {
+        for row in chart::line_chart(&consistency, width, chart_height(area)) {
             lines.push(Line::from(format!("  {row}")));
         }
         lines.push(Line::from(format!(
@@ -283,7 +288,7 @@ impl HistoryScreen {
 
         lines.push(section("error rate over time", theme));
         let rate = analysis::error_rate_series(results);
-        for row in chart::line_chart(&rate, width, CHART_HEIGHT) {
+        for row in chart::line_chart(&rate, width, chart_height(area)) {
             lines.push(Line::from(format!("  {row}")));
         }
         lines.push(Line::from(format!(
@@ -354,6 +359,10 @@ impl HistoryScreen {
 mod tests {
     use super::*;
 
+    fn rect(width: u16, height: u16) -> Rect {
+        Rect::new(0, 0, width, height)
+    }
+
     #[test]
     fn tabs_cycle_wrap_around() {
         assert_eq!(HistoryTab::default(), HistoryTab::Overview);
@@ -392,5 +401,13 @@ mod tests {
     fn tab_bar_default_marks_overview_active() {
         let bar = tab_bar(HistoryTab::Overview, crate::ui::widgets::theme::DEFAULT).to_string();
         assert!(bar.starts_with("[ Overview ]"));
+    }
+
+    #[test]
+    fn chart_height_shrinks_on_short_terminals() {
+        assert_eq!(chart_height(rect(80, 30)), 7);
+        assert_eq!(chart_height(rect(80, 24)), 7);
+        assert_eq!(chart_height(rect(80, 16)), 5);
+        assert_eq!(chart_height(rect(80, 10)), 3);
     }
 }
