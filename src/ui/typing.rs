@@ -36,8 +36,9 @@ impl TypingScreen {
 fn render_prompt(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let test = &app.engine.test;
     let animations_on = app.settings.display.animations;
+    let title = if test.is_paused() { " dytype · paused " } else { " dytype " };
     let block = Block::default()
-        .title(" dytype ")
+        .title(title)
         .borders(Borders::ALL)
         .style(Style::default().bg(app.theme.background));
     frame.render_widget(block, area);
@@ -107,10 +108,14 @@ fn render_prompt(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
 fn render_stats(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let ls = app.live_stats;
-    let status = match app.engine.test.status {
-        TestStatus::NotStarted => "type to start",
-        TestStatus::Running => "running",
-        TestStatus::Finished => "complete",
+    let status = if app.engine.test.is_paused() {
+        "paused — ctrl+p to resume"
+    } else {
+        match app.engine.test.status {
+            TestStatus::NotStarted => "type to start",
+            TestStatus::Running => "running",
+            TestStatus::Finished => "complete",
+        }
     };
     let theme = app.theme;
     let lines = vec![

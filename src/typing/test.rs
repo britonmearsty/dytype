@@ -50,6 +50,8 @@ pub struct TypingTest {
     pub keystrokes: Vec<Keystroke>,
     pub mode: TestMode,
     pub duration: Option<Duration>,
+    paused_at: Option<Instant>,
+    paused_total: Duration,
     word_end: Vec<usize>,
 }
 
@@ -91,6 +93,8 @@ impl TypingTest {
             keystrokes: Vec::new(),
             mode,
             duration: None,
+            paused_at: None,
+            paused_total: Duration::ZERO,
             word_end,
         }
     }
@@ -149,16 +153,38 @@ impl TypingTest {
     }
 
     pub fn elapsed(&self, now: Instant) -> Duration {
-        self.started_at
-            .map(|start| now.saturating_duration_since(start))
-            .unwrap_or_default()
+        let Some(start) = self.started_at else {
+            return Duration::ZERO;
+        };
+        let floor = self.paused_at.unwrap_or(now);
+        floor
+            .saturating_duration_since(start)
+            .saturating_sub(self.paused_total)
     }
 
     pub fn deadline(&self) -> Option<Instant> {
         match self.mode {
-            TestMode::Time(duration) => self.started_at.map(|start| start + duration),
+            TestMode::Time(duration) => {
+                self.started_at.map(|start| start + duration + self.paused_total)
+            }
             TestMode::Words(_) => None,
         }
+    }
+
+    pub fn pause(&mut self, now: Instant) {
+        if self.status == TestStatus::Running && self.paused_at.is_none() {
+            self.paused_at = Some(now);
+        }
+    }
+
+    pub fn resume(&mut self, now: Instant) {
+        if let Some(at) = self.paused_at.take() {
+            self.paused_total += now.saturating_duration_since(at);
+        }
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused_at.is_some()
     }
 
     pub fn handle_key(&mut self, key: char, now: Instant) {
@@ -248,7 +274,9 @@ impl TypingTest {
             return;
         }
         let finish_at = match self.mode {
-            TestMode::Time(duration) => self.started_at.map_or(now, |start| start + duration),
+            TestMode::Time(duration) => {
+                self.started_at.map_or(now, |start| start + duration + self.paused_total)
+            }
             TestMode::Words(_) => now,
         };
         self.finish(finish_at);
@@ -262,7 +290,7 @@ impl TypingTest {
         self.finished_at = Some(now);
         self.duration = self
             .started_at
-            .map(|start| now.saturating_duration_since(start));
+            .map(|start| now.saturating_duration_since(start).saturating_sub(self.paused_total));
     }
 }
 
@@ -395,6 +423,71 @@ mod tests {
     fn word_mode_has_no_deadline() {
         let test = TypingTest::new(TestMode::Words(2), &test_words());
         assert_eq!(test.deadline(), None);
+    }
+
+    #[test]
+    fn pause_freezes_elapsed_and_deadline_until_resume() {
+        let start = Instant::now();
+        let mut test = TypingTest::new(
+            TestMode::Time(Duration::from_secs(30)),
+            &test_words(),
+        );
+        test.handle_key('f', start);
+        assert_eq!(test.status, TestStatus::Running);
+        assert_eq!(test.deadline(), Some(start + Duration::from_secs(30)));
+
+        test.pause(start + Duration::from_secs(1));
+        assert!(test.is_paused());
+        let while_paused = start + Duration::from_secs(10);
+        assert_eq!(test.elapsed(while_paused), Duration::from_secs(1));
+        test.tick(while_paused);
+        assert_eq!(test.status, TestStatus::Running);
+
+        test.resume(while_paused);
+        assert!(!test.is_paused());
+        let after_resume = start + Duration::from_secs(15);
+        let paused_window = while_paused - (start + Duration::from_secs(1));
+        assert_eq!(
+            test.elapsed(after_resume),
+            Duration::from_secs(15) - paused_window
+        );
+        assert_eq!(
+            test.deadline(),
+            Some(start + Duration::from_secs(30) + paused_window)
+        );
+    }
+
+    #[test]
+    fn pause_before_start_is_a_noop() {
+        let mut test = TypingTest::new(TestMode::Words(2), &test_words());
+        test.pause(Instant::now());
+        assert!(!test.is_paused());
+        assert_eq!(test.status, TestStatus::NotStarted);
+    }
+
+    #[test]
+    fn resume_without_pause_is_a_noop() {
+        let mut test = TypingTest::new(TestMode::Words(2), &test_words());
+        test.resume(Instant::now());
+        assert!(!test.is_paused());
+    }
+
+    #[test]
+    fn time_mode_still_finishes_after_pausing() {
+        let start = Instant::now();
+        let mut test = TypingTest::new(
+            TestMode::Time(Duration::from_secs(1)),
+            &test_words(),
+        );
+        test.handle_key('f', start);
+        test.pause(start + Duration::from_millis(200));
+        test.resume(start + Duration::from_millis(900));
+        assert_eq!(test.status, TestStatus::Running);
+        test.tick(start + Duration::from_millis(1100));
+        assert_eq!(test.status, TestStatus::Running);
+        test.tick(start + Duration::from_millis(1800));
+        assert_eq!(test.status, TestStatus::Finished);
+        assert_eq!(test.duration, Some(Duration::from_secs(1)));
     }
 
     #[test]

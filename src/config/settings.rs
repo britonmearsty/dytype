@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -89,9 +90,13 @@ impl Default for TypingSettings {
     }
 }
 
-/// Reserved for user-defined keybindings; key layouts are still built in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct KeybindingSettings {}
+/// Per-command key overrides, as `command = "key"` pairs. Unknown commands
+/// and unparseable keys are ignored; the built-in defaults fill the gaps.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeybindingSettings {
+    #[serde(default)]
+    pub overrides: BTreeMap<String, String>,
+}
 
 /// Everything about how the UI looks and animates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -278,5 +283,28 @@ mod tests {
         let recanonical: Config =
             toml::from_str(&encoded.replace("\"Nord\"", "\"nord\"")).expect("recanonicalizes");
         assert_eq!(recanonical.theme.name, "Nord");
+    }
+
+    #[test]
+    fn keybinding_overrides_parse_and_roundtrip() {
+        let config: Config = toml::from_str(
+            "[keybindings.overrides]\nrestart = \"ctrl+k\"\ntoggle_stats = \"F8\"\n",
+        )
+        .expect("parses keybindings");
+        assert_eq!(
+            config.keybindings.overrides.get("restart"),
+            Some(&"ctrl+k".to_owned())
+        );
+        assert_eq!(config.keybindings.overrides.len(), 2);
+
+        let encoded = toml::to_string(&config).expect("serializes keybindings");
+        let decoded: Config = toml::from_str(&encoded).expect("roundtrips keybindings");
+        assert_eq!(decoded.keybindings, config.keybindings);
+    }
+
+    #[test]
+    fn missing_keybindings_section_is_empty() {
+        let config: Config = toml::from_str("theme.name = \"Dracula\"\n").expect("parses");
+        assert!(config.keybindings.overrides.is_empty());
     }
 }

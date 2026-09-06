@@ -43,11 +43,10 @@ pub fn run_event_loop(
 pub fn render(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
     match app.state {
-        AppState::Typing => TypingScreen.render(frame, area, app),
+        AppState::Typing | AppState::Paused => TypingScreen.render(frame, area, app),
         AppState::Menu => ConfigScreen.render(frame, area, app),
         AppState::Results => ResultsScreen.render(frame, area, app),
         AppState::Settings => SettingsScreen.render(frame, area, app),
         AppState::History => HistoryScreen.render(frame, area, app),
-        AppState::Paused => {}
     }
 }

@@ -11,6 +11,7 @@ use crate::animation::Animations;
 use crate::audio::event::SoundEvent;
 use crate::audio::manager::AudioManager;
 use crate::config::settings::{Config, CursorAnimation};
+use crate::input::command::{Command, Keymap};
 use crate::input::keybindings::{Action, Keybindings};
 use crate::persistence::database::Database;
 use crate::stats::history::History;
@@ -62,7 +63,7 @@ pub struct App {
 impl App {
     pub fn new() -> io::Result<Self> {
         let settings = Config::load()?;
-        let keybindings = Keybindings::load()?;
+        let keybindings = Keybindings::new(Keymap::default().with_overrides(&settings.keybindings.overrides));
         let database = Database::open()?;
         let history = database.load_history()?;
         let audio = AudioManager::new(&settings.sounds)?;
@@ -124,39 +125,16 @@ impl App {
     pub fn handle_key(&mut self, key: &KeyEvent) {
         let now = Instant::now();
         match self.keybindings.handle(key) {
-            Action::Quit => match self.state {
-                AppState::Settings | AppState::History => self.open_config_menu(),
-                _ => self.should_quit = true,
-            },
-            Action::Restart => match self.state {
-                AppState::Typing => self.start_new_test(),
-                AppState::Results => self.open_config_menu(),
-                AppState::Menu => self.config_menu.select_start(),
-                AppState::History => self.open_config_menu(),
-                _ => {}
-            },
+            Action::Command(command) => self.handle_command(command, now),
             Action::Submit => match self.state {
                 AppState::Typing => {
                     self.engine.test.submit(now);
                     self.dispatch_typing_sounds();
                 }
                 AppState::Results => self.start_new_test(),
-                AppState::Menu => {
-                    self.config = self.config_menu.apply();
-                    self.config.punctuation = self.settings.typing.punctuation;
-                    self.config.numbers = self.settings.typing.numbers;
-                    self.start_new_test();
-                }
+                AppState::Menu => self.start_from_menu(),
                 AppState::Settings => self.open_config_menu(),
                 AppState::History => self.start_new_test(),
-                _ => {}
-            },
-            Action::Settings => match self.state {
-                AppState::Menu | AppState::Results | AppState::History => self.open_settings(),
-                _ => {}
-            },
-            Action::History => match self.state {
-                AppState::Menu | AppState::Results => self.state = AppState::History,
                 _ => {}
             },
             Action::MoveUp => match self.state {
@@ -203,6 +181,65 @@ impl App {
                 self.dispatch_typing_sounds();
             }
             _ => {}
+        }
+    }
+
+    fn start_from_menu(&mut self) {
+        self.config = self.config_menu.apply();
+        self.config.punctuation = self.settings.typing.punctuation;
+        self.config.numbers = self.settings.typing.numbers;
+        self.start_new_test();
+    }
+
+    fn handle_command(&mut self, command: Command, now: Instant) {
+        match command {
+            Command::Quit => match self.state {
+                AppState::Settings | AppState::History => self.open_config_menu(),
+                _ => self.should_quit = true,
+            },
+            Command::Restart => match self.state {
+                AppState::Typing | AppState::Paused => self.start_new_test(),
+                AppState::Results | AppState::History => self.open_config_menu(),
+                AppState::Menu => self.config_menu.select_start(),
+                _ => {}
+            },
+            Command::Pause => match self.state {
+                AppState::Typing if self.engine.test.is_running() => {
+                    self.engine.test.pause(now);
+                    self.state = AppState::Paused;
+                }
+                AppState::Paused => {
+                    self.engine.test.resume(now);
+                    self.state = AppState::Typing;
+                }
+                _ => {}
+            },
+            Command::NextTest => match self.state {
+                AppState::Menu => self.start_from_menu(),
+                AppState::Typing
+                | AppState::Paused
+                | AppState::Results
+                | AppState::History => self.start_new_test(),
+                _ => {}
+            },
+            Command::PreviousTest => match self.state {
+                AppState::Results | AppState::History => self.open_config_menu(),
+                _ => {}
+            },
+            Command::OpenSettings => match self.state {
+                AppState::Menu | AppState::Results | AppState::History => self.open_settings(),
+                _ => {}
+            },
+            Command::OpenHistory => match self.state {
+                AppState::Menu | AppState::Results => self.state = AppState::History,
+                _ => {}
+            },
+            Command::ToggleStats => match self.state {
+                AppState::Typing | AppState::Paused => {
+                    self.settings.display.compact_mode = !self.settings.display.compact_mode;
+                }
+                _ => {}
+            },
         }
     }
 
