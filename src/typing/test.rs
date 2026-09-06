@@ -251,6 +251,11 @@ impl TypingTest {
             correct: false,
             timestamp: now,
         });
+        // The typo consumes the expected character: the cursor moves on so the
+        // next key re-aligns with the following position. (Tutor convention:
+        // typing "helxo" for "hello" is 4 correct + 1 incorrect, not a cascade
+        // of pinned errors.) Clamp so stray keys past the end don't overflow.
+        self.cursor = (self.cursor + 1).min(self.chars.len());
     }
 
     fn backspace(&mut self) {
@@ -327,10 +332,10 @@ mod tests {
     }
 
     #[test]
-    fn incorrect_key_records_error_without_advancing() {
+    fn incorrect_key_records_error_and_advances() {
         let mut test = TypingTest::new(TestMode::Words(2), &test_words());
         test.handle_key('z', Instant::now());
-        assert_eq!(test.cursor, 0);
+        assert_eq!(test.cursor, 1);
         assert_eq!(test.incorrect_chars, 1);
         assert_eq!(test.errors.len(), 1);
         assert_eq!(test.errors[0].expected, Some('f'));
@@ -353,7 +358,7 @@ mod tests {
     fn stray_key_at_word_boundary_is_an_error() {
         let mut test = TypingTest::new(TestMode::Words(2), &test_words());
         run_keys(&mut test, "fooz", Instant::now());
-        assert_eq!(test.cursor, 3);
+        assert_eq!(test.cursor, 4);
         assert_eq!(test.errors.len(), 1);
         assert_eq!(test.keystrokes.len(), 4);
         assert_eq!(test.errors[0].expected, Some(' '));
@@ -390,11 +395,45 @@ mod tests {
     #[test]
     fn mistake_can_be_fixed_and_still_finish() {
         let mut test = TypingTest::new(TestMode::Words(2), &test_words());
-        run_keys(&mut test, "fioo bar", Instant::now());
+        run_keys(&mut test, "fxo bar", Instant::now());
         assert_eq!(test.status, TestStatus::Finished);
         assert_eq!(test.incorrect_chars, 1);
         assert_eq!(test.errors.len(), 1);
+        assert_eq!(test.correct_chars, 6);
+    }
+
+    #[test]
+    fn typo_consumes_next_char_in_hello_example() {
+        let words = vec!["hello".to_owned()];
+        let mut test = TypingTest::new(TestMode::Words(1), &words);
+        run_keys(&mut test, "helxo", Instant::now());
+        assert_eq!(test.cursor, 5);
+        assert_eq!(test.correct_chars, 4);
+        assert_eq!(test.incorrect_chars, 1);
+        assert_eq!(test.errors.len(), 1);
+        assert_eq!(test.errors[0].expected, Some('l'));
+        assert_eq!(test.errors[0].actual, 'x');
+        assert_eq!(test.status, TestStatus::Finished);
+    }
+
+    #[test]
+    fn cursor_moves_forward_past_typos_and_backwards_on_backspace() {
+        let mut test = TypingTest::new(TestMode::Words(2), &test_words());
+        run_keys(&mut test, "f", Instant::now());
+        assert_eq!(test.cursor, 1);
+        // A typo consumes the expected char and keeps moving forward.
+        run_keys(&mut test, "x", Instant::now());
+        assert_eq!(test.cursor, 2);
+        assert_eq!(test.states[1], CharState::Incorrect);
+        // Backspace rewinds onto the mistake so it can be corrected.
+        test.handle_key(DELETE, Instant::now());
+        assert_eq!(test.cursor, 1);
+        assert_eq!(test.states[1], CharState::Unseen);
+        // Retyping the right char moves past it cleanly.
+        run_keys(&mut test, "oo bar", Instant::now());
+        assert_eq!(test.status, TestStatus::Finished);
         assert_eq!(test.correct_chars, 7);
+        assert_eq!(test.incorrect_chars, 1);
     }
 
     #[test]

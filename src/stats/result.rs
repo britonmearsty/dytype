@@ -164,7 +164,7 @@ fn character_stats(keystrokes: &[Keystroke]) -> Vec<CharStat> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::typing::test::TypingTest;
+    use crate::typing::test::{TestStatus, TypingTest};
 
     /// Types `text` with ~90ms between keys and submits at 2s. Returns the
     /// finished test with full keystroke timing data.
@@ -180,11 +180,15 @@ mod tests {
     }
 
     #[test]
-    fn mistake_and_fix_are_reflected_in_metrics() {
-        let test = typed_test("fioo bar", TestMode::Words(2));
+    fn mistake_metrics_are_reflected_in_result() {
+        // Time mode keeps the test open so the stray trailing key is counted.
+        let test = typed_test(
+            "foo barx",
+            TestMode::Time(Duration::from_secs(3600)),
+        );
         let result = TestResult::build(7, &test, Difficulty::Normal, Instant::now());
         assert_eq!(result.id, 7);
-        assert_eq!(result.mode, TestMode::Words(2));
+        assert_eq!(result.mode, TestMode::Time(Duration::from_secs(3600)));
         assert_eq!(result.difficulty, Difficulty::Normal);
         assert_ne!(result.timestamp, 0);
         assert_eq!(result.characters, 7);
@@ -204,6 +208,24 @@ mod tests {
     }
 
     #[test]
+    fn helxo_example_reaches_exactly_four_of_five() {
+        let words = vec!["hello".to_owned()];
+        let mut test = TypingTest::new(TestMode::Words(1), &words);
+        let start = Instant::now();
+        for key in "helxo".chars() {
+            test.handle_key(key, start);
+        }
+        assert_eq!(test.status, TestStatus::Finished);
+        let result = TestResult::build(42, &test, Difficulty::Normal, start);
+        assert_eq!(result.correct_chars, 4);
+        assert_eq!(result.incorrect_chars, 1);
+        assert_eq!(result.errors, 1);
+        assert_eq!(result.characters, 5);
+        assert_eq!(result.completed_words, 1);
+        assert_eq!(result.accuracy, 80.0);
+    }
+
+    #[test]
     fn flawless_run_yields_full_accuracy() {
         let test = typed_test("foo bar", TestMode::Words(2));
         let result = TestResult::build(1, &test, Difficulty::Easy, Instant::now());
@@ -217,13 +239,16 @@ mod tests {
     fn character_stats_count_per_position() {
         let test = typed_test("fioo bar", TestMode::Words(2));
         let stats = character_stats(&test.keystrokes);
-        let r = stats.iter().copied().find(|s| s.ch == 'o').expect("o typed");
-        assert_eq!(r.typed, 3);
-        assert_eq!(r.errors, 1);
-        assert!((33.0..=34.0).contains(&r.rate()));
-        let b = stats.iter().copied().find(|s| s.ch == 'b').expect("b typed");
-        assert_eq!(b.typed, 1);
-        assert_eq!(b.errors, 0);
+        // 'o' is expected at positions 1 and 2; position 1 was missed with 'i'.
+        let o = stats.iter().copied().find(|s| s.ch == 'o').expect("o expected");
+        assert_eq!(o.typed, 2);
+        assert_eq!(o.errors, 1);
+        assert!((49.0..=51.0).contains(&o.rate()));
+        // 'a' is expected once and was missed in the misalignment.
+        let a = stats.iter().copied().find(|s| s.ch == 'a').expect("a expected");
+        assert_eq!(a.typed, 1);
+        assert_eq!(a.errors, 1);
+        assert_eq!(a.rate(), 100.0);
         // Sorted by errors descending.
         for pair in stats.windows(2) {
             assert!(pair[0].errors >= pair[1].errors);

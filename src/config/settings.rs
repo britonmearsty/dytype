@@ -307,4 +307,59 @@ mod tests {
         let config: Config = toml::from_str("theme.name = \"Dracula\"\n").expect("parses");
         assert!(config.keybindings.overrides.is_empty());
     }
+
+    #[test]
+    fn v0_config_with_only_old_fields_gains_every_default() {
+        // A config written by the very first release: no grouped sections,
+        // only flat fields that no longer exist as-is. Every modern field
+        // must fall back to its default instead of failing to parse.
+        let config: Config = toml::from_str(
+            "[sounds]\nenabled = true\nvolume = 0.7\n[practice]\nwords = 50\n",
+        )
+        .expect("old config parses");
+        assert!(config.sounds.enabled);
+        assert_eq!(config.sounds.volume, 0.7);
+        assert_eq!(config.theme.name, "Default");
+        assert_eq!(config.typing.difficulty, Difficulty::Normal);
+        assert_eq!(config.typing.language, "English");
+        assert!(!config.typing.punctuation);
+        assert_eq!(config.display.fps, 60);
+        assert!(config.display.cursor.blink);
+        assert!(config.display.animations);
+        assert!(config.keybindings.overrides.is_empty());
+    }
+
+    #[test]
+    fn migration_preserves_known_fields_and_defaults_new_ones() {
+        // The classic migration shape: an old config sets some fields; new
+        // fields added later must appear with defaults while old values stay.
+        let config: Config = toml::from_str(
+            "[theme]\nname = \"gruvbox\"\n[typing]\ndifficulty = \"hard\"\nnumbers = true\n\
+             [sounds]\nsound_pack = \"typewriter\"\n",
+        )
+        .expect("partial config parses");
+        assert_eq!(config.theme.name, "Gruvbox");
+        assert_eq!(config.typing.difficulty, Difficulty::Hard);
+        assert!(config.typing.numbers);
+        assert!(!config.typing.punctuation);
+        assert!(config.typing.backspace);
+        assert_eq!(config.sounds.sound_pack, SoundPack::Typewriter);
+        assert!(config.sounds.enabled);
+        assert_eq!(config.display.cursor_animation, CursorAnimation::Smooth);
+        assert_eq!(config.display.text_width, 0);
+        assert!(!config.display.compact_mode);
+    }
+
+    #[test]
+    fn unknown_fields_and_sections_are_ignored() {
+        // Forward compatibility: fields our parser does not know (e.g. written
+        // by a newer version) must be ignored, not fatal.
+        let config: Config = toml::from_str(
+            "[theme]\nname = \"nord\"\n[future]\nnew_feature = true\n\
+             [display.cursor]\nfancy_blink = \"very\"\n",
+        )
+        .expect("unknown fields ignored");
+        assert_eq!(config.theme.name, "Nord");
+        assert_eq!(config.display.cursor.style, CursorStyle::Bar);
+    }
 }
