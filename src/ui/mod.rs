@@ -26,10 +26,14 @@ pub fn run_event_loop(
     app: &mut App,
 ) -> io::Result<()> {
     loop {
-        if event::poll(app.poll_timeout())?
-            && let event::Event::Key(key) = event::read()?
-        {
-            app.handle_key(&key);
+        if event::poll(app.poll_timeout())? {
+            match event::read()? {
+                event::Event::Key(key) => app.handle_key(&key),
+                // The next draw reflows to the new size via ratatui's
+                // autoresize, so a resize needs no action here.
+                event::Event::Resize(_, _) => {}
+                _ => {}
+            }
         }
         app.tick(Instant::now());
         terminal.draw(|frame| render(frame, app))?;

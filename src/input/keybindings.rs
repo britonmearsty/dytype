@@ -38,6 +38,9 @@ impl Keybindings {
             KeyCode::Char(_) if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Ignore,
             KeyCode::Char(c) => Action::TypeChar(c),
             KeyCode::Backspace => Action::Backspace,
+            // Some Windows consoles report the backspace key as Delete in raw
+            // mode; treat it as a backspace so deletion keeps working there.
+            KeyCode::Delete => Action::Backspace,
             KeyCode::Enter => Action::Submit,
             KeyCode::Up => Action::MoveUp,
             KeyCode::Down => Action::MoveDown,
@@ -112,5 +115,11 @@ mod tests {
         assert_eq!(binds.handle(&ctrl('p')), Action::Command(Command::Pause));
         assert_eq!(binds.handle(&ctrl('t')), Action::Command(Command::ToggleStats));
         assert_eq!(binds.handle(&ctrl('x')), Action::Ignore);
+    }
+
+    #[test]
+    fn delete_is_treated_as_backspace_for_windows_consoles() {
+        let binds = binds();
+        assert_eq!(binds.handle(&event(KeyCode::Delete)), Action::Backspace);
     }
 }

@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -19,9 +20,81 @@ impl SoundBackend for SilentBackend {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Player {
+    #[cfg(target_os = "linux")]
     Aplay,
+    #[cfg(target_os = "linux")]
     Paplay,
+    #[cfg(target_os = "macos")]
+    Afplay,
     Ffplay,
+    #[cfg(target_os = "windows")]
+    PowerShell,
+}
+
+impl Player {
+    fn binary(self) -> &'static str {
+        match self {
+            #[cfg(target_os = "linux")]
+            Player::Aplay => "aplay",
+            #[cfg(target_os = "linux")]
+            Player::Paplay => "paplay",
+            #[cfg(target_os = "macos")]
+            Player::Afplay => "afplay",
+            Player::Ffplay => "ffplay",
+            #[cfg(target_os = "windows")]
+            Player::PowerShell => "powershell",
+        }
+    }
+
+    fn probe_arg(self) -> &'static str {
+        match self {
+            Player::Ffplay => "-version",
+            #[cfg(target_os = "macos")]
+            Player::Afplay => "-h",
+            _ => "--version",
+        }
+    }
+
+    fn available(self) -> bool {
+        #[cfg(target_os = "windows")]
+        if self == Player::PowerShell {
+            // PowerShell ships with every supported Windows install.
+            return true;
+        }
+        command_found(self.binary(), self.probe_arg())
+    }
+
+    /// Builds the argument vector for playing `path` with this player.
+    fn args(self, path: &Path) -> Vec<OsString> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Player::Aplay => vec!["-q".into(), path.into()],
+            #[cfg(target_os = "linux")]
+            Player::Paplay => vec!["--quiet".into(), path.into()],
+            #[cfg(target_os = "macos")]
+            Player::Afplay => vec![path.into()],
+            Player::Ffplay => vec![
+                "-nodisp".into(),
+                "-autoexit".into(),
+                "-loglevel".into(),
+                "quiet".into(),
+                path.into(),
+            ],
+            #[cfg(target_os = "windows")]
+            Player::PowerShell => vec![
+                "-NoProfile".into(),
+                "-NonInteractive".into(),
+                "-STA".into(),
+                "-Command".into(),
+                format!(
+                    "Add-Type -AssemblyName System.Windows.Forms; \
+                     (New-Object System.Media.SoundPlayer '{}').PlaySync()",
+                    path.display()
+                )
+                .into(),
+            ],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -49,23 +122,8 @@ impl WaveBackend {
     }
 
     fn spawn_player(&self, path: &Path) {
-        let mut cmd = Command::new(match self.player {
-            Player::Aplay => "aplay",
-            Player::Paplay => "paplay",
-            Player::Ffplay => "ffplay",
-        });
-        match self.player {
-            Player::Aplay => {
-                cmd.arg("-q");
-            }
-            Player::Paplay => {
-                cmd.arg("--quiet");
-            }
-            Player::Ffplay => {
-                cmd.args(["-nodisp", "-autoexit", "-loglevel", "quiet"]);
-            }
-        }
-        cmd.arg(path);
+        let mut cmd = Command::new(self.player.binary());
+        cmd.args(self.player.args(path));
         let _ = cmd.spawn();
     }
 }
@@ -99,24 +157,25 @@ fn event_index(event: SoundEvent) -> usize {
 }
 
 fn detect_player() -> Option<Player> {
-    let candidates: [(Player, &str, &str); 3] = [
-        (Player::Aplay, "aplay", "--version"),
-        (Player::Paplay, "paplay", "--version"),
-        (Player::Ffplay, "ffplay", "-version"),
-    ];
-    candidates
-        .into_iter()
-        .find(|(_, bin, arg)| {
-            Command::new(bin)
-                .arg(arg)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false)
-        })
-        .map(|(player, _, _)| player)
+    #[cfg(target_os = "linux")]
+    let candidates = [Player::Aplay, Player::Paplay, Player::Ffplay];
+    #[cfg(target_os = "macos")]
+    let candidates = [Player::Afplay, Player::Ffplay];
+    #[cfg(target_os = "windows")]
+    let candidates = [Player::PowerShell, Player::Ffplay];
+
+    candidates.into_iter().find(|player| player.available())
+}
+
+fn command_found(bin: &str, arg: &str) -> bool {
+    Command::new(bin)
+        .arg(arg)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn voice(f0: f32, f1: f32, dur: f32, decay: f32, kind: WaveKind, amp: f32) -> Vec<i16> {
@@ -353,5 +412,71 @@ mod tests {
             .map(|c| i16::from_le_bytes(*c))
             .collect();
         assert_eq!(data, samples);
+    }
+
+    fn args_to_strings(player: Player, path: &str) -> Vec<String> {
+        player
+            .args(Path::new(path))
+            .into_iter()
+            .map(|os| os.into_string().expect("args are utf8"))
+            .collect()
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn linux_players_build_their_invocations() {
+        assert_eq!(
+            args_to_strings(Player::Aplay, "/tmp/clip.wav"),
+            ["-q", "/tmp/clip.wav"]
+        );
+        assert_eq!(
+            args_to_strings(Player::Paplay, "/tmp/clip.wav"),
+            ["--quiet", "/tmp/clip.wav"]
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_backend_is_preferred_and_simple() {
+        assert_eq!(
+            args_to_strings(Player::Afplay, "/tmp/clip.wav"),
+            ["/tmp/clip.wav"]
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn windows_backend_uses_powershell_sound_player() {
+        let args = args_to_strings(Player::PowerShell, "C:\\tmp\\clip.wav");
+        assert!(args.contains(&"-Command".to_string()));
+        let command = args.last().expect("command is last");
+        assert!(command.contains("System.Media.SoundPlayer"));
+        assert_eq!(command.contains("clip.wav"), true);
+    }
+
+    #[test]
+    fn ffplay_fallback_is_cross_platform() {
+        assert_eq!(
+            args_to_strings(Player::Ffplay, "clip.wav"),
+            ["-nodisp", "-autoexit", "-loglevel", "quiet", "clip.wav"]
+        );
+    }
+
+    #[test]
+    fn wave_backend_uses_scoped_temp_paths() {
+        let samples = voice(440.0, 440.0, 0.01, 0.005, WaveKind::Sine, 1.0);
+        let mut backend = WaveBackend {
+            player: Player::Ffplay,
+            samples: vec![samples],
+            counter: 0,
+        };
+        let path = std::env::temp_dir().join(format!("dytype-{}-0000.wav", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        backend.play(SoundEvent::Keypress, 0.5);
+        assert!(
+            path.exists(),
+            "play() should write the temp WAV before handing it to the player"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 }

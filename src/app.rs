@@ -2,8 +2,6 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use crossterm::event::KeyEvent;
-use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
@@ -17,6 +15,7 @@ use crate::persistence::database::Database;
 use crate::stats::history::History;
 use crate::stats::live::LiveStats;
 use crate::stats::result::TestResult;
+use crate::terminal::TerminalGuard;
 use crate::typing::engine::Engine;
 use crate::typing::generator::{Generator, TestConfig, WordPools};
 use crate::typing::test::{BACKSPACE_KEY, TestMode};
@@ -341,18 +340,33 @@ impl App {
 }
 
 pub fn run() -> io::Result<()> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
+    install_panic_hook();
+    let mut guard = TerminalGuard::enter()?;
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new()?;
     let result = ui::run_event_loop(&mut terminal, &mut app);
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+    guard.restore();
 
     result
+}
+
+/// Ensures the terminal is restored even if the application panics, by
+/// intercepting panics before unwinding and restoring terminal state, then
+/// re-raising the panic.
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::terminal::disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = crossterm::execute!(
+            stdout,
+            crossterm::cursor::Show,
+            crossterm::terminal::LeaveAlternateScreen
+        );
+        previous(info);
+    }));
 }

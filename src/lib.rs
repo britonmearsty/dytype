@@ -5,5 +5,6 @@ pub mod config;
 pub mod input;
 pub mod persistence;
 pub mod stats;
+pub mod terminal;
 pub mod typing;
 pub mod ui;
