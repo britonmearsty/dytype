@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -48,7 +49,7 @@ jobs:
           name="dytype-${GITHUB_REF_NAME}-${{ matrix.target }}"
           if [[ "${{ matrix.archive }}" == "zip" ]]; then
             cp dytype.exe "/tmp/$name.exe"
-            cd /tmp && zip "$name.zip" "$name.exe"
+            cd /tmp && 7z a -tzip "$name.zip" "$name.exe" >/dev/null
             echo "artifact=/tmp/$name.zip" >> "$GITHUB_ENV"
           else
             cp dytype "/tmp/$name"
