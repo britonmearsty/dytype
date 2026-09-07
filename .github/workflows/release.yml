@@ -48,13 +48,11 @@ jobs:
           cd target/${{ matrix.target }}/release
           name="dytype-${GITHUB_REF_NAME}-${{ matrix.target }}"
           if [[ "${{ matrix.archive }}" == "zip" ]]; then
-            cp dytype.exe "/tmp/$name.exe"
-            cd /tmp && 7z a -tzip "$name.zip" "$name.exe" >/dev/null
-            echo "artifact=/tmp/$name.zip" >> "$GITHUB_ENV"
+            7z a -tzip "$name.zip" dytype.exe >/dev/null
+            echo "artifact=target/${{ matrix.target }}/release/$name.zip" >> "$GITHUB_ENV"
           else
-            cp dytype "/tmp/$name"
-            cd /tmp && tar -czf "$name.tar.gz" "$name"
-            echo "artifact=/tmp/$name.tar.gz" >> "$GITHUB_ENV"
+            tar -czf "$name.tar.gz" dytype
+            echo "artifact=target/${{ matrix.target }}/release/$name.tar.gz" >> "$GITHUB_ENV"
           fi
 
       - name: Upload artifact
