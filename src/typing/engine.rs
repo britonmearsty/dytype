@@ -13,6 +13,14 @@ impl Engine {
         }
     }
 
+    /// Underscores the raw given text (code snippets, custom layouts) instead
+    /// of space-joining tokens.
+    pub fn with_text(mode: TestMode, text: &str) -> Self {
+        Self {
+            test: TypingTest::with_text(mode, text),
+        }
+    }
+
     pub fn handle_key(&mut self, key: char, now: Instant) {
         self.test.handle_key(key, now);
     }

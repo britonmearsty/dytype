@@ -1,0 +1,53 @@
+# dytype.example.toml
+#
+# A fully-annotated config file. Copy it to your config directory (or write
+# just the sections you want) and edit to taste. Any omitted field falls back
+# to its default; unknown fields are ignored, so this file is forward
+# compatible with the version that produced it.
+#
+#   Linux/macOS:  ~/.config/dytype/config.toml
+#   Windows:      %APPDATA%\dytype\config.toml
+
+# ---- Appearance -----------------------------------------------------------
+[theme]
+# One of the built-in names, or the name of a custom theme file you dropped
+# into the themes dir:  ~/.config/dytype/themes/<name>.toml
+name = "Default"
+
+[display]
+animations = true       # keypress / cursor animations
+fps = 60                # UI frame rate for animations
+compact_mode = false    # tighter layouts on short terminals
+mouse = true            # allow clicks in menus and history
+text_width = 0          # max prompt width in cells (0 = fill the window)
+cursor_animation = "smooth"  # "smooth" | "off"
+
+[display.cursor]
+style = "bar"           # "bar" | "block" | "underline"
+blink = true
+blink_speed = 500       # blink half-period in ms
+
+# ---- The test itself ------------------------------------------------------
+[typing]
+difficulty = "normal"   # "easy" | "normal" | "hard" | "expert"
+language = "English"    # selectable language pack (see assets/words/)
+punctuation = false     # sprinkle punctuation into lower difficulties
+numbers = false         # replace some words with numbers
+backspace = true        # let backspace correct mistakes mid-test
+
+# ---- Sound ----------------------------------------------------------------
+[sounds]
+enabled = true
+volume = 0.65           # 0.0 ..= 1.0
+sound_pack = "mechanical"   # "mechanical" | "typewriter" | "soft" | "retro" | "none"
+error = true            # tick on a mistyped key
+complete = true         # chime when a test finishes
+
+# ---- Key bindings ---------------------------------------------------------
+# Override individual built-in bindings. Keys are written like "ctrl+c",
+# "F1", "tab", "esc", "F5" or a plain character. Unknown commands or
+# unparseable keys are ignored. See the F1 help screen for the full list.
+[keybindings.overrides]
+# restart = "ctrl+k"
+# open_help = "F1"
+# toggle_stats = "ctrl+t"

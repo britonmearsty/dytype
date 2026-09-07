@@ -3,9 +3,11 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::typing::rng::{Rng, XorShift};
+use crate::typing::snippets::{available_snippets, snippet_source};
 use crate::typing::test::TestMode;
 use crate::typing::words::{
-    EASY_WORDS, EXPERT_WORDS, HARD_WORDS, NORMAL_WORDS, QUOTES, Words,
+    EASY_WORDS, EXPERT_WORDS, HARD_WORDS, NORMAL_WORDS, QUOTES, Words, language_quote_list,
+    language_word_list,
 };
 
 const PUNCTUATION: [char; 6] = ['.', ',', ';', ':', '!', '?'];
@@ -47,6 +49,8 @@ pub enum TestKind {
     Quote,
     Custom(Vec<String>),
     Practice(usize),
+    /// A whole code snippet typed line by line, preserving its layout.
+    Code,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +91,7 @@ impl TestConfig {
             TestKind::Quote => "quote".to_owned(),
             TestKind::Custom(_) => "custom".to_owned(),
             TestKind::Practice(n) => format!("practice {n}"),
+            TestKind::Code => "code".to_owned(),
         };
         format!("{kind} · {}", self.difficulty.label())
     }
@@ -97,6 +102,7 @@ pub struct WordPools {
     pub normal: Words,
     pub hard: Words,
     pub expert: Words,
+    pub quotes: Words,
 }
 
 impl Default for WordPools {
@@ -106,6 +112,33 @@ impl Default for WordPools {
             normal: Words::from_text(NORMAL_WORDS),
             hard: Words::from_text(HARD_WORDS),
             expert: Words::from_text(EXPERT_WORDS),
+            quotes: Words::from_text(QUOTES),
+        }
+    }
+}
+
+impl WordPools {
+    /// Pools for a language name (e.g. "English", "German"). Difficulty list
+    /// files (`{lang}-{difficulty}.txt`) win over a plain `{lang}.txt`; any
+    /// missing asset falls back to the embedded English pools so tests always
+    /// have material to type.
+    pub fn load(language: &str) -> Self {
+        if language.eq_ignore_ascii_case("English") {
+            return Self::default();
+        }
+        let slug = language.to_ascii_lowercase().replace(' ', "-");
+        let pool = |difficulty: &str, fallback: &str| {
+            language_word_list(&slug, difficulty)
+                .map(|content| Words::from_text(&content))
+                .filter(|words| !words.list.is_empty())
+                .unwrap_or_else(|| Words::from_text(fallback))
+        };
+        Self {
+            easy: pool("easy", EASY_WORDS),
+            normal: pool("normal", NORMAL_WORDS),
+            hard: pool("hard", HARD_WORDS),
+            expert: pool("expert", EXPERT_WORDS),
+            quotes: Words::from_text(&language_quote_list(&slug)),
         }
     }
 }
@@ -156,7 +189,7 @@ impl Generator {
                 (TestMode::Time(*duration), words)
             }
             TestKind::Quote => {
-                let words = self.pick_quote();
+                let words = self.pick_quote(&pools.quotes);
                 let count = words.len();
                 (TestMode::Words(count), words)
             }
@@ -176,6 +209,16 @@ impl Generator {
                 };
                 let words = self.sample(&source.list, *count);
                 (TestMode::Words(*count), words)
+            }
+            TestKind::Code => {
+                // A snippet is typed one line at a time: each line is a
+                // "token", so `Words(line_count)` finishes when every line
+                // has been typed and newline (line) boundaries are crossed.
+                let snippets = available_snippets();
+                let name = &snippets[self.rng.next_below(snippets.len() as u32) as usize];
+                let lines: Vec<String> = snippet_source(name).lines().map(str::to_owned).collect();
+                let count = lines.len();
+                (TestMode::Words(count), lines)
             }
         }
     }
@@ -212,13 +255,9 @@ impl Generator {
         words
     }
 
-    fn pick_quote(&mut self) -> Vec<String> {
-        let quotes: Vec<&str> = QUOTES
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .collect();
-        let quote = quotes[self.rng.next_below(quotes.len() as u32) as usize];
+    fn pick_quote(&mut self, quotes: &Words) -> Vec<String> {
+        let quotes = &quotes.list;
+        let quote = &quotes[self.rng.next_below(quotes.len() as u32) as usize];
         quote.split_whitespace().map(str::to_owned).collect()
     }
 
@@ -309,7 +348,12 @@ mod tests {
     #[test]
     fn pools_are_lowercase_without_punctuation() {
         let pools = pools();
-        for pool in [&pools.easy.list, &pools.normal.list, &pools.hard.list, &pools.expert.list] {
+        for pool in [
+            &pools.easy.list,
+            &pools.normal.list,
+            &pools.hard.list,
+            &pools.expert.list,
+        ] {
             for word in pool {
                 assert!(
                     word.chars().all(|c| c.is_ascii_lowercase()),
@@ -408,7 +452,10 @@ mod tests {
                 .iter()
                 .any(|word| word.chars().any(|c| PUNCTUATION.contains(&c)));
         }
-        assert!(saw_punct, "punctuation flag should decorate easy words across seeds");
+        assert!(
+            saw_punct,
+            "punctuation flag should decorate easy words across seeds"
+        );
     }
 
     #[test]
@@ -419,9 +466,14 @@ mod tests {
         for seed in 0..400 {
             let mut generator = Generator::with_seed(seed);
             let (_, words) = generator.generate(&config, &pools(), &[]);
-            saw_digit |= words.iter().any(|word| word.chars().any(|c| c.is_ascii_digit()));
+            saw_digit |= words
+                .iter()
+                .any(|word| word.chars().any(|c| c.is_ascii_digit()));
         }
-        assert!(saw_digit, "numbers flag should replace words with numbers across seeds");
+        assert!(
+            saw_digit,
+            "numbers flag should replace words with numbers across seeds"
+        );
     }
 
     #[test]
@@ -439,8 +491,14 @@ mod tests {
                 saw_digit |= word.chars().any(|c| c.is_ascii_digit());
             }
         }
-        assert!(saw_upper, "expert pool should produce uppercase across seeds");
-        assert!(saw_punct, "expert pool should produce punctuation across seeds");
+        assert!(
+            saw_upper,
+            "expert pool should produce uppercase across seeds"
+        );
+        assert!(
+            saw_punct,
+            "expert pool should produce punctuation across seeds"
+        );
         assert!(saw_digit, "expert pool should produce digits across seeds");
     }
 
@@ -462,6 +520,8 @@ mod tests {
         assert_eq!(config.label(), "25 words · normal");
         let config = TestConfig::new(TestKind::Time(Duration::from_secs(30)), Difficulty::Expert);
         assert_eq!(config.label(), "30s · expert");
+        let config = TestConfig::new(TestKind::Code, Difficulty::Hard);
+        assert_eq!(config.label(), "code · hard");
     }
 
     #[test]
@@ -472,5 +532,54 @@ mod tests {
         };
         let words = generator.sample(&pool.list, 10);
         assert_eq!(words.len(), 10);
+    }
+
+    #[test]
+    fn code_kind_generates_complete_snippet_lines() {
+        let mut generator = Generator::with_seed(5);
+        let config = TestConfig::new(TestKind::Code, Difficulty::Normal);
+        let (mode, lines) = generator.generate(&config, &pools(), &[]);
+        match mode {
+            TestMode::Words(count) => assert_eq!(count, lines.len()),
+            TestMode::Time(_) => panic!("code should be word mode"),
+        }
+        assert!(lines.len() >= 5, "snippet line count too low");
+        let text = lines.join("\n");
+        // Every embedded snippet is indented, so the layout survives.
+        assert!(
+            text.contains("  "),
+            "code layout should preserve indentation"
+        );
+        assert!(
+            text.starts_with("fn ") || text.starts_with("def ") || text.starts_with("function "),
+            "expected a code snippet, got: {text:?}"
+        );
+        assert!(lines.iter().all(|line| !line.is_empty()));
+    }
+
+    #[test]
+    fn german_pools_load_and_generate() {
+        let pools = WordPools::load("German");
+        assert!(!pools.easy.list.is_empty());
+        assert!(!pools.normal.list.is_empty());
+        assert_eq!(pools.easy.list, pools.expert.list); // plain list reused
+        assert!(!pools.quotes.list.is_empty());
+        assert!(pools.quotes.list.iter().any(|q| q.contains("Fuchs")));
+
+        let mut generator = Generator::with_seed(3);
+        let config = TestConfig::new(TestKind::Quote, Difficulty::Normal);
+        let (mode, words) = generator.generate(&config, &pools, &[]);
+        match mode {
+            TestMode::Words(count) => assert_eq!(count, words.len()),
+            TestMode::Time(_) => panic!("quote should be word mode"),
+        }
+        assert!(!words.is_empty(), "german quotes must generate words");
+    }
+
+    #[test]
+    fn unknown_language_falls_back_to_english_pools() {
+        let pools = WordPools::load("Klingon");
+        assert_eq!(pools.easy, WordPools::default().easy);
+        assert_eq!(pools.quotes, WordPools::default().quotes);
     }
 }

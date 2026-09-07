@@ -35,7 +35,10 @@ impl Consistency {
                 *bucket += 1;
             }
         }
-        let samples: Vec<f64> = buckets.iter().map(|&count| Wpm::calculate(count, 1.0)).collect();
+        let samples: Vec<f64> = buckets
+            .iter()
+            .map(|&count| Wpm::calculate(count, 1.0))
+            .collect();
         Consistency::calculate(&samples)
     }
 }

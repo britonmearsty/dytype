@@ -14,12 +14,29 @@ pub fn unix_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
-/// Per-character typing history within a test.
+/// Per-character typing history within a test, keyed by expected context so
+/// bigram/trigram error analysis can attribute mistakes to their neighbors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CharStat {
     pub ch: char,
     pub typed: u32,
     pub errors: u32,
+    /// Expected character immediately before this one, if any.
+    pub prev: Option<char>,
+    /// Expected character two before this one, if any.
+    pub prev2: Option<char>,
+}
+
+impl Default for CharStat {
+    fn default() -> Self {
+        Self {
+            ch: '\0',
+            typed: 0,
+            errors: 0,
+            prev: None,
+            prev2: None,
+        }
+    }
 }
 
 impl CharStat {
@@ -103,7 +120,7 @@ impl TestResult {
             duration_ms: elapsed.as_millis().min(u128::from(u64::MAX)) as u64,
             mode: test.mode,
             difficulty,
-            char_stats: character_stats(&test.keystrokes),
+            char_stats: character_stats(&test.keystrokes, &test.chars),
         }
     }
 
@@ -129,19 +146,36 @@ fn avg_key_interval_ms(keystrokes: &[Keystroke]) -> f64 {
     total as f64 / (keystrokes.len() - 1) as f64 / 1000.0
 }
 
-/// Aggregates keystrokes by the expected character, tracking how often each
-/// one was typed and how often it was missed. Sorted by misses first.
-fn character_stats(keystrokes: &[Keystroke]) -> Vec<CharStat> {
-    let mut counts: Vec<(char, u32, u32)> = Vec::new();
+/// An aggregated per-context tally: `(prev2, prev, ch, typed, errors)`.
+type ContextCount = (Option<char>, Option<char>, char, u32, u32);
+
+/// Aggregates keystrokes by their expected context (the one or two expected
+/// characters that precede them), tracking how often each was typed and how
+/// often it was missed. Sorted by misses first.
+fn character_stats(keystrokes: &[Keystroke], expected: &[char]) -> Vec<CharStat> {
+    let mut counts: Vec<ContextCount> = Vec::new();
     for stroke in keystrokes {
-        match counts.iter_mut().find(|(ch, _, _)| *ch == stroke.expected) {
-            Some((_, typed, errors)) => {
+        let prev = stroke
+            .position
+            .checked_sub(1)
+            .and_then(|i| expected.get(i).copied());
+        let prev2 = stroke
+            .position
+            .checked_sub(2)
+            .and_then(|i| expected.get(i).copied());
+        match counts
+            .iter_mut()
+            .find(|(p2, p1, ch, _, _)| *p2 == prev2 && *p1 == prev && *ch == stroke.expected)
+        {
+            Some((_, _, _, typed, errors)) => {
                 *typed += 1;
                 if !stroke.correct {
                     *errors += 1;
                 }
             }
             None => counts.push((
+                prev2,
+                prev,
                 stroke.expected,
                 1,
                 if stroke.correct { 0 } else { 1 },
@@ -150,13 +184,20 @@ fn character_stats(keystrokes: &[Keystroke]) -> Vec<CharStat> {
     }
     let mut stats: Vec<CharStat> = counts
         .into_iter()
-        .map(|(ch, typed, errors)| CharStat { ch, typed, errors })
+        .map(|(prev2, prev, ch, typed, errors)| CharStat {
+            ch,
+            typed,
+            errors,
+            prev,
+            prev2,
+        })
         .collect();
     stats.sort_by(|a, b| {
         b.errors
             .cmp(&a.errors)
             .then(b.typed.cmp(&a.typed))
             .then(a.ch.cmp(&b.ch))
+            .then(a.prev.cmp(&b.prev))
     });
     stats
 }
@@ -182,10 +223,7 @@ mod tests {
     #[test]
     fn mistake_metrics_are_reflected_in_result() {
         // Time mode keeps the test open so the stray trailing key is counted.
-        let test = typed_test(
-            "foo barx",
-            TestMode::Time(Duration::from_secs(3600)),
-        );
+        let test = typed_test("foo barx", TestMode::Time(Duration::from_secs(3600)));
         let result = TestResult::build(7, &test, Difficulty::Normal, Instant::now());
         assert_eq!(result.id, 7);
         assert_eq!(result.mode, TestMode::Time(Duration::from_secs(3600)));
@@ -236,19 +274,38 @@ mod tests {
     }
 
     #[test]
-    fn character_stats_count_per_position() {
+    fn character_stats_group_by_context() {
+        // "fioo bar" against "foo bar": the stray 'i' at position 1 shifts
+        // every later key one slot, so four more follow-on misses accumulate.
         let test = typed_test("fioo bar", TestMode::Words(2));
-        let stats = character_stats(&test.keystrokes);
-        // 'o' is expected at positions 1 and 2; position 1 was missed with 'i'.
-        let o = stats.iter().copied().find(|s| s.ch == 'o').expect("o expected");
-        assert_eq!(o.typed, 2);
-        assert_eq!(o.errors, 1);
-        assert!((49.0..=51.0).contains(&o.rate()));
-        // 'a' is expected once and was missed in the misalignment.
-        let a = stats.iter().copied().find(|s| s.ch == 'a').expect("a expected");
-        assert_eq!(a.typed, 1);
-        assert_eq!(a.errors, 1);
-        assert_eq!(a.rate(), 100.0);
+        let stats = character_stats(&test.keystrokes, &test.chars);
+        // The two 'o' occurrences are now distinct: the one after 'f' was
+        // skipped by the 'i' miss, the one after 'o' is typed cleanly.
+        let o_after_f = stats
+            .iter()
+            .find(|s| s.ch == 'o' && s.prev == Some('f'))
+            .expect("o after f");
+        assert_eq!((o_after_f.typed, o_after_f.errors), (1, 1));
+        assert_eq!(o_after_f.prev2, None);
+        assert_eq!(o_after_f.rate(), 100.0);
+        let o_after_o = stats
+            .iter()
+            .find(|s| s.ch == 'o' && s.prev == Some('o'))
+            .expect("o after o");
+        assert_eq!((o_after_o.typed, o_after_o.errors), (1, 0));
+        assert_eq!(o_after_o.rate(), 0.0);
+        // 'a' was caught in the misalignment after the space.
+        let a = stats
+            .iter()
+            .copied()
+            .find(|s| s.ch == 'a')
+            .expect("a expected");
+        assert_eq!((a.typed, a.errors), (1, 1));
+        assert_eq!(a.prev, Some('b'));
+        let f = stats.iter().find(|s| s.ch == 'f').expect("f expected");
+        assert_eq!(f.typed, 1);
+        assert_eq!(f.errors, 0);
+        assert_eq!(f.prev, None);
         // Sorted by errors descending.
         for pair in stats.windows(2) {
             assert!(pair[0].errors >= pair[1].errors);

@@ -74,6 +74,15 @@ mod tests {
     }
 
     #[test]
+    fn f1_opens_help() {
+        let binds = binds();
+        assert_eq!(
+            binds.handle(&event(KeyCode::F(1))),
+            Action::Command(Command::OpenHelp)
+        );
+    }
+
+    #[test]
     fn f2_opens_settings() {
         let binds = binds();
         assert_eq!(
@@ -94,7 +103,10 @@ mod tests {
     #[test]
     fn common_actions_unchanged() {
         let binds = binds();
-        assert_eq!(binds.handle(&event(KeyCode::Char('a'))), Action::TypeChar('a'));
+        assert_eq!(
+            binds.handle(&event(KeyCode::Char('a'))),
+            Action::TypeChar('a')
+        );
         assert_eq!(binds.handle(&event(KeyCode::Enter)), Action::Submit);
         assert_eq!(
             binds.handle(&event(KeyCode::Tab)),
@@ -113,7 +125,10 @@ mod tests {
         assert_eq!(binds.handle(&ctrl('c')), Action::Command(Command::Quit));
         assert_eq!(binds.handle(&ctrl('r')), Action::Command(Command::Restart));
         assert_eq!(binds.handle(&ctrl('p')), Action::Command(Command::Pause));
-        assert_eq!(binds.handle(&ctrl('t')), Action::Command(Command::ToggleStats));
+        assert_eq!(
+            binds.handle(&ctrl('t')),
+            Action::Command(Command::ToggleStats)
+        );
         assert_eq!(binds.handle(&ctrl('x')), Action::Ignore);
     }
 

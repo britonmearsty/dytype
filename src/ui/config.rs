@@ -8,10 +8,11 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::App;
 use crate::typing::generator::{Difficulty, TestConfig, TestKind};
+use crate::ui::widgets::theme::Theme;
 
 const WORD_COUNTS: &[usize] = &[10, 25, 50, 100, 200];
 const DURATIONS_SECS: &[usize] = &[15, 30, 60, 120];
-const MODE_LABELS: [&str; 4] = ["Words", "Time", "Quote", "Practice"];
+const MODE_LABELS: [&str; 5] = ["Words", "Time", "Quote", "Practice", "Code"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -19,6 +20,7 @@ enum Mode {
     Time,
     Quote,
     Practice,
+    Code,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +65,7 @@ impl ConfigMenu {
             TestKind::Quote => (2, 1, 0),
             TestKind::Custom(_) => (0, 1, 0),
             TestKind::Practice(n) => (3, position_or(WORD_COUNTS, *n, 1), 0),
+            TestKind::Code => (4, 1, 0),
         };
         Self {
             mode,
@@ -79,6 +82,7 @@ impl ConfigMenu {
             Mode::Time => TestKind::Time(Duration::from_secs(DURATIONS_SECS[self.time] as u64)),
             Mode::Quote => TestKind::Quote,
             Mode::Practice => TestKind::Practice(WORD_COUNTS[self.count]),
+            Mode::Code => TestKind::Code,
         };
         TestConfig::new(kind, self.current_difficulty())
     }
@@ -98,8 +102,7 @@ impl ConfigMenu {
                 self.count = (self.count as i8 + dir).rem_euclid(WORD_COUNTS.len() as i8) as usize;
             }
             Row::Time => {
-                self.time =
-                    (self.time as i8 + dir).rem_euclid(DURATIONS_SECS.len() as i8) as usize;
+                self.time = (self.time as i8 + dir).rem_euclid(DURATIONS_SECS.len() as i8) as usize;
             }
             Row::Difficulty => {
                 self.difficulty = (self.difficulty as i8 + dir).rem_euclid(4) as usize;
@@ -112,13 +115,37 @@ impl ConfigMenu {
         self.selected = self.rows().len() - 1;
     }
 
+    /// Which row (if any) is under a click at content row `y` inside `area`.
+    /// Row 0 renders one line below the border plus one blank spacer line.
+    pub fn row_at(&self, area: Rect, y: u16) -> Option<usize> {
+        let first = area.y.saturating_add(2);
+        if y < first {
+            return None;
+        }
+        let index = usize::from(y - first);
+        if index < self.rows().len() {
+            Some(index)
+        } else {
+            None
+        }
+    }
+
+    /// True if clicking this row starts the test (the last row of the menu).
+    pub fn is_start(&self, index: usize) -> bool {
+        index == self.rows().len() - 1 && self.rows()[index] == Row::Start
+    }
+
+    pub fn select_row(&mut self, index: usize) {
+        self.selected = index;
+    }
+
     fn rows(&self) -> Vec<Row> {
         match self.current_mode() {
             Mode::Words | Mode::Practice => {
                 vec![Row::Mode, Row::Count, Row::Difficulty, Row::Start]
             }
             Mode::Time => vec![Row::Mode, Row::Time, Row::Difficulty, Row::Start],
-            Mode::Quote => vec![Row::Mode, Row::Difficulty, Row::Start],
+            Mode::Quote | Mode::Code => vec![Row::Mode, Row::Difficulty, Row::Start],
         }
     }
 
@@ -127,7 +154,8 @@ impl ConfigMenu {
             0 => Mode::Words,
             1 => Mode::Time,
             2 => Mode::Quote,
-            _ => Mode::Practice,
+            3 => Mode::Practice,
+            _ => Mode::Code,
         }
     }
 
@@ -152,7 +180,9 @@ impl ConfigMenu {
 }
 
 fn position_or(list: &[usize], value: usize, fallback: usize) -> usize {
-    list.iter().position(|&item| item == value).unwrap_or(fallback)
+    list.iter()
+        .position(|&item| item == value)
+        .unwrap_or(fallback)
 }
 
 fn difficulty_index(difficulty: Difficulty) -> usize {
@@ -166,6 +196,28 @@ fn difficulty_index(difficulty: Difficulty) -> usize {
 
 pub struct ConfigScreen;
 
+/// One-shot welcome hint shown on the config menu until the first test starts.
+fn first_run_hint(theme: Theme, first_run: bool) -> Vec<Line<'static>> {
+    if !first_run {
+        return Vec::new();
+    }
+    vec![
+        Line::from(vec![
+            Span::styled(
+                "   Welcome to dytype! ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "Press F1 any time for help, or Enter to start your first test.",
+                Style::default().fg(theme.muted),
+            ),
+        ]),
+        Line::from(""),
+    ]
+}
+
 impl ConfigScreen {
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect, app: &App) {
         let menu = &app.config_menu;
@@ -175,7 +227,9 @@ impl ConfigScreen {
             let selected = i == menu.selected;
             let marker = if selected { "▸" } else { " " };
             let value_style = if selected {
-                Style::default().fg(theme.correct).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.correct)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.muted)
             };
@@ -188,8 +242,9 @@ impl ConfigScreen {
             ]));
         }
         lines.push(Line::from(""));
+        lines.extend(first_run_hint(app.theme, app.first_run));
         lines.push(Line::from(Span::styled(
-            "   ↑/↓ move   ←/→ change   Enter start test   F2 settings   F3 history   Esc quit",
+            "   ↑/↓ move   ←/→ change   Enter start test   F1 help   F2 settings   F3 history   Esc quit",
             Style::default().fg(theme.muted),
         )));
         let block = Block::default()
@@ -246,6 +301,15 @@ mod tests {
     }
 
     #[test]
+    fn code_mode_roundtrips_and_hides_count_rows() {
+        let config = TestConfig::new(TestKind::Code, Difficulty::Hard);
+        let menu = ConfigMenu::from_config(&config);
+        assert_eq!(menu.apply(), config);
+        assert_eq!(menu.rows(), vec![Row::Mode, Row::Difficulty, Row::Start]);
+        assert_eq!(menu.value_text(Row::Mode), "Code");
+    }
+
+    #[test]
     fn switching_mode_clamps_selection_into_range() {
         let mut menu = default_menu();
         menu.select_start();
@@ -261,5 +325,31 @@ mod tests {
         assert_eq!(menu.selected, 3);
         menu.move_selection(1);
         assert_eq!(menu.selected, 0);
+    }
+
+    #[test]
+    fn row_at_maps_click_y_to_row() {
+        let menu = default_menu();
+        let rows = menu.rows();
+        let area = Rect::new(0, 0, 80, 30);
+        // First row renders at area.y+2 (below border + blank spacer).
+        assert_eq!(menu.row_at(area, 2), Some(0));
+        assert_eq!(menu.row_at(area, 2 + 2), Some(2));
+        let last = 2 + rows.len() - 1;
+        assert_eq!(menu.row_at(area, last as u16), Some(rows.len() - 1));
+        assert_eq!(menu.row_at(area, last as u16 + 1), None);
+        assert!(!menu.is_start(0));
+        assert!(menu.is_start(rows.len() - 1));
+    }
+
+    #[test]
+    fn first_run_hint_shows_only_before_welcome_dismissed() {
+        let theme = crate::ui::widgets::theme::DEFAULT;
+        let shown = first_run_hint(theme, true);
+        assert_eq!(shown.len(), 2);
+        assert!(shown[0].to_string().contains("Welcome to dytype!"));
+
+        let hidden = first_run_hint(theme, false);
+        assert!(hidden.is_empty());
     }
 }

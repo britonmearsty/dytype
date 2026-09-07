@@ -130,10 +130,18 @@ impl CharEffects {
 
     pub fn trigger(&mut self, index: usize, kind: EffectKind, now: Instant) {
         if let Some(effect) = self.effects.iter_mut().find(|e| e.index == index) {
-            *effect = CharEffect { index, kind, start: now };
+            *effect = CharEffect {
+                index,
+                kind,
+                start: now,
+            };
             return;
         }
-        self.effects.push(CharEffect { index, kind, start: now });
+        self.effects.push(CharEffect {
+            index,
+            kind,
+            start: now,
+        });
         if self.effects.len() > 128 {
             self.effects.remove(0);
         }
@@ -211,7 +219,10 @@ impl ResultsAnimation {
     /// True while any results tween is still running.
     pub fn is_active(&self, now: Instant) -> bool {
         let active = |tween: &Option<Tween>| tween.is_some_and(|t| !t.finished(now));
-        active(&self.wpm) || active(&self.raw) || active(&self.accuracy) || active(&self.consistency)
+        active(&self.wpm)
+            || active(&self.raw)
+            || active(&self.accuracy)
+            || active(&self.consistency)
             || active(&self.title)
     }
 }
@@ -385,7 +396,12 @@ mod tests {
     #[test]
     fn tween_waiting_for_delayed_start_stays() {
         let start = base();
-        let tween = Tween::new(0.0, 10.0, start + Duration::from_millis(100), Duration::from_secs(1));
+        let tween = Tween::new(
+            0.0,
+            10.0,
+            start + Duration::from_millis(100),
+            Duration::from_secs(1),
+        );
         assert_eq!(tween.value(start), 0.0);
         assert_eq!(tween.value(start + Duration::from_millis(99)), 0.0);
     }
@@ -454,7 +470,9 @@ mod tests {
         let mut effects = CharEffects::new();
         effects.trigger(3, EffectKind::Emphasize, start);
         effects.trigger(3, EffectKind::Error, start + Duration::from_millis(50));
-        let (kind, _) = effects.progress(3, start + Duration::from_millis(50)).unwrap();
+        let (kind, _) = effects
+            .progress(3, start + Duration::from_millis(50))
+            .unwrap();
         assert_eq!(kind, EffectKind::Error);
     }
 
@@ -464,7 +482,11 @@ mod tests {
         let mut effects = CharEffects::new();
         effects.trigger(3, EffectKind::Emphasize, start);
         effects.prune(start + Duration::from_millis(300));
-        assert!(effects.progress(3, start + Duration::from_millis(300)).is_none());
+        assert!(
+            effects
+                .progress(3, start + Duration::from_millis(300))
+                .is_none()
+        );
     }
 
     #[test]

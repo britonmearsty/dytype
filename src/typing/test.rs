@@ -67,17 +67,34 @@ fn char_to_optional(ch: char) -> Option<char> {
 impl TypingTest {
     pub fn new(mode: TestMode, words: &[String]) -> Self {
         let text = words.join(" ");
-        let chars: Vec<char> = text.chars().collect();
-        let word_end = {
-            let mut ends = Vec::new();
-            for (index, &ch) in chars.iter().enumerate() {
-                if ch == ' ' {
-                    ends.push(index);
-                }
+        let mut end_positions = Vec::new();
+        for (index, ch) in text.chars().enumerate() {
+            if ch == ' ' {
+                end_positions.push(index);
             }
-            ends.push(chars.len());
-            ends
-        };
+        }
+        let chars: Vec<char> = text.chars().collect();
+        end_positions.push(chars.len());
+        Self::from_chars(mode, chars, end_positions)
+    }
+
+    /// Builds a test that types `text` verbatim, keeping its layout: newlines
+    /// and indentation are part of the target. A completed "word" is a typed
+    /// line, so `test.mode` word counts should equal the number of lines.
+    pub fn with_text(mode: TestMode, text: &str) -> Self {
+        let chars: Vec<char> = text.chars().collect();
+        let mut end_positions = Vec::new();
+        for (index, &ch) in chars.iter().enumerate() {
+            if ch == '\n' {
+                end_positions.push(index);
+            }
+        }
+        end_positions.push(chars.len());
+        Self::from_chars(mode, chars, end_positions)
+    }
+
+    fn from_chars(mode: TestMode, chars: Vec<char>, word_end: Vec<usize>) -> Self {
+        let text = chars.iter().collect();
         let states = vec![CharState::Unseen; chars.len()];
         Self {
             text,
@@ -164,9 +181,9 @@ impl TypingTest {
 
     pub fn deadline(&self) -> Option<Instant> {
         match self.mode {
-            TestMode::Time(duration) => {
-                self.started_at.map(|start| start + duration + self.paused_total)
-            }
+            TestMode::Time(duration) => self
+                .started_at
+                .map(|start| start + duration + self.paused_total),
             TestMode::Words(_) => None,
         }
     }
@@ -279,9 +296,9 @@ impl TypingTest {
             return;
         }
         let finish_at = match self.mode {
-            TestMode::Time(duration) => {
-                self.started_at.map_or(now, |start| start + duration + self.paused_total)
-            }
+            TestMode::Time(duration) => self
+                .started_at
+                .map_or(now, |start| start + duration + self.paused_total),
             TestMode::Words(_) => now,
         };
         self.finish(finish_at);
@@ -293,9 +310,10 @@ impl TypingTest {
         }
         self.status = TestStatus::Finished;
         self.finished_at = Some(now);
-        self.duration = self
-            .started_at
-            .map(|start| now.saturating_duration_since(start).saturating_sub(self.paused_total));
+        self.duration = self.started_at.map(|start| {
+            now.saturating_duration_since(start)
+                .saturating_sub(self.paused_total)
+        });
     }
 }
 
@@ -467,10 +485,7 @@ mod tests {
     #[test]
     fn pause_freezes_elapsed_and_deadline_until_resume() {
         let start = Instant::now();
-        let mut test = TypingTest::new(
-            TestMode::Time(Duration::from_secs(30)),
-            &test_words(),
-        );
+        let mut test = TypingTest::new(TestMode::Time(Duration::from_secs(30)), &test_words());
         test.handle_key('f', start);
         assert_eq!(test.status, TestStatus::Running);
         assert_eq!(test.deadline(), Some(start + Duration::from_secs(30)));
@@ -514,10 +529,7 @@ mod tests {
     #[test]
     fn time_mode_still_finishes_after_pausing() {
         let start = Instant::now();
-        let mut test = TypingTest::new(
-            TestMode::Time(Duration::from_secs(1)),
-            &test_words(),
-        );
+        let mut test = TypingTest::new(TestMode::Time(Duration::from_secs(1)), &test_words());
         test.handle_key('f', start);
         test.pause(start + Duration::from_millis(200));
         test.resume(start + Duration::from_millis(900));
@@ -532,10 +544,7 @@ mod tests {
     #[test]
     fn time_mode_finishes_after_duration() {
         let start = Instant::now();
-        let mut test = TypingTest::new(
-            TestMode::Time(Duration::from_secs(1)),
-            &test_words(),
-        );
+        let mut test = TypingTest::new(TestMode::Time(Duration::from_secs(1)), &test_words());
         test.handle_key('f', start);
         assert_eq!(test.status, TestStatus::Running);
         test.tick(start + Duration::from_millis(900));

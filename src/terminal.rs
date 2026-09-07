@@ -13,16 +13,19 @@ pub struct TerminalGuard {
 }
 
 impl TerminalGuard {
-    /// Enters the alternate screen and raw mode, wrapping them in a guard.
+    /// Enters the alternate screen, raw mode and mouse capture, wrapping them
+    /// in a guard.
     ///
     /// Returns `Err` if the terminal cannot be initialized, without leaving a
     /// half-configured state behind.
     pub fn enter() -> io::Result<Self> {
-        use crossterm::terminal::{enable_raw_mode, EnterAlternateScreen};
+        use crossterm::event::EnableMouseCapture;
+        use crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
 
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        if let Err(error) = execute!(stdout, EnterAlternateScreen) {
+        let result = execute!(stdout, EnterAlternateScreen, EnableMouseCapture);
+        if let Err(error) = result {
             let _ = disable_raw_mode();
             return Err(error);
         }
@@ -35,10 +38,11 @@ impl TerminalGuard {
         }
         self.restored = true;
         use crossterm::cursor::Show;
+        use crossterm::event::DisableMouseCapture;
         use crossterm::terminal::LeaveAlternateScreen;
 
         let mut stdout = io::stdout();
-        let _ = execute!(stdout, Show, LeaveAlternateScreen);
+        let _ = execute!(stdout, Show, LeaveAlternateScreen, DisableMouseCapture);
         let _ = disable_raw_mode();
     }
 }

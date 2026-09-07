@@ -1,14 +1,15 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::KeyEvent;
-use ratatui::backend::CrosstermBackend;
+use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 use crate::animation::Animations;
 use crate::audio::event::SoundEvent;
 use crate::audio::manager::AudioManager;
 use crate::config::settings::{Config, CursorAnimation};
+use crate::config::state::UiState;
 use crate::input::command::{Command, Keymap};
 use crate::input::keybindings::{Action, Keybindings};
 use crate::persistence::database::Database;
@@ -17,11 +18,11 @@ use crate::stats::live::LiveStats;
 use crate::stats::result::TestResult;
 use crate::terminal::TerminalGuard;
 use crate::typing::engine::Engine;
-use crate::typing::generator::{Generator, TestConfig, WordPools};
+use crate::typing::generator::{Generator, TestConfig, TestKind, WordPools};
 use crate::typing::test::{BACKSPACE_KEY, TestMode};
 use crate::ui;
 use crate::ui::config::ConfigMenu;
-use crate::ui::history::HistoryTab;
+use crate::ui::history::{HistoryTab, tab_at};
 use crate::ui::settings::SettingsMenu;
 use crate::ui::widgets::theme::Theme;
 
@@ -33,6 +34,7 @@ pub enum AppState {
     Results,
     Settings,
     History,
+    Help,
 }
 
 pub struct App {
@@ -54,6 +56,8 @@ pub struct App {
     pub anim: Animations,
     pub db: Database,
     pub should_quit: bool,
+    pub first_run: bool,
+    help_return: AppState,
     sounds_seen: usize,
     sounds_words: usize,
     sounds_finished: bool,
@@ -62,7 +66,8 @@ pub struct App {
 impl App {
     pub fn new() -> io::Result<Self> {
         let settings = Config::load()?;
-        let keybindings = Keybindings::new(Keymap::default().with_overrides(&settings.keybindings.overrides));
+        let keybindings =
+            Keybindings::new(Keymap::default().with_overrides(&settings.keybindings.overrides));
         let database = Database::open()?;
         let history = database.load_history()?;
         let audio = AudioManager::new(&settings.sounds)?;
@@ -71,7 +76,8 @@ impl App {
             difficulty: settings.typing.difficulty,
             ..TestConfig::default()
         };
-        let settings_menu = SettingsMenu::from_config(&settings);
+        let settings_menu = SettingsMenu::from_config(&settings, &Theme::display_names());
+        let pools = WordPools::load(&settings.typing.language);
         Ok(Self {
             state: AppState::Menu,
             settings,
@@ -84,13 +90,15 @@ impl App {
             config_menu: ConfigMenu::from_config(&config),
             settings_menu,
             config,
-            pools: WordPools::default(),
+            pools,
             generator: Generator::new(),
             missed_words: Vec::new(),
             live_stats: LiveStats::default(),
             anim: Animations::new(),
             db: database,
             should_quit: false,
+            first_run: UiState::load().first_run,
+            help_return: AppState::Menu,
             sounds_seen: 0,
             sounds_words: 0,
             sounds_finished: false,
@@ -98,9 +106,18 @@ impl App {
     }
 
     pub fn start_new_test(&mut self) {
+        self.acknowledge_first_run();
         self.state = AppState::Typing;
-        let (mode, words) = self.generator.generate(&self.config, &self.pools, &self.missed_words);
-        self.engine = Engine::with_test(mode, &words);
+        let (mode, words) = self
+            .generator
+            .generate(&self.config, &self.pools, &self.missed_words);
+        self.engine = if matches!(self.config.kind, TestKind::Code) {
+            // Snippet lines are re-joined with real newlines so the layout
+            // (indentation, line breaks) survives into the typed target.
+            Engine::with_text(mode, &words.join("\n"))
+        } else {
+            Engine::with_test(mode, &words)
+        };
         self.live_stats = LiveStats::default();
         self.anim.mark_test_start(Instant::now());
         self.sounds_seen = 0;
@@ -164,7 +181,9 @@ impl App {
                 AppState::History => self.history_tab = self.history_tab.cycle(1),
                 _ => {}
             },
-            Action::Backspace if self.state == AppState::Typing && self.settings.typing.backspace => {
+            Action::Backspace
+                if self.state == AppState::Typing && self.settings.typing.backspace =>
+            {
                 self.engine.handle_key(BACKSPACE_KEY, now);
                 self.anim.observe(&self.engine.test, now);
                 if self.settings.display.cursor_animation == CursorAnimation::Off {
@@ -183,6 +202,44 @@ impl App {
         }
     }
 
+    pub fn handle_mouse(&mut self, mouse: &MouseEvent) {
+        if !self.settings.display.mouse {
+            return;
+        }
+        let MouseEventKind::Down(MouseButton::Left) = mouse.kind else {
+            return;
+        };
+        let Ok((width, height)) = crossterm::terminal::size() else {
+            return;
+        };
+        let area = ratatui::layout::Rect::new(0, 0, width, height);
+        let (x, y) = (mouse.column, mouse.row);
+        match self.state {
+            // Any click after a finished test starts a fresh one, which is the
+            // action most people reach for on the results screen.
+            AppState::Results => self.start_new_test(),
+            AppState::Menu => {
+                if let Some(index) = self.config_menu.row_at(area, y) {
+                    if self.config_menu.is_start(index) {
+                        self.start_from_menu();
+                    } else {
+                        self.config_menu.select_row(index);
+                    }
+                }
+            }
+            AppState::Settings => {
+                self.settings_menu
+                    .select_row(self.settings_menu.row_at(area, y).unwrap_or(0));
+            }
+            AppState::History => {
+                if let Some(tab) = tab_at(area, x, y) {
+                    self.history_tab = tab;
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn start_from_menu(&mut self) {
         self.config = self.config_menu.apply();
         self.config.punctuation = self.settings.typing.punctuation;
@@ -193,7 +250,9 @@ impl App {
     fn handle_command(&mut self, command: Command, now: Instant) {
         match command {
             Command::Quit => match self.state {
-                AppState::Settings | AppState::History => self.open_config_menu(),
+                AppState::Settings | AppState::History | AppState::Help => {
+                    self.exit_current_view();
+                }
                 _ => self.should_quit = true,
             },
             Command::Restart => match self.state {
@@ -215,10 +274,9 @@ impl App {
             },
             Command::NextTest => match self.state {
                 AppState::Menu => self.start_from_menu(),
-                AppState::Typing
-                | AppState::Paused
-                | AppState::Results
-                | AppState::History => self.start_new_test(),
+                AppState::Typing | AppState::Paused | AppState::Results | AppState::History => {
+                    self.start_new_test()
+                }
                 _ => {}
             },
             Command::PreviousTest => match self.state {
@@ -233,6 +291,10 @@ impl App {
                 AppState::Menu | AppState::Results => self.state = AppState::History,
                 _ => {}
             },
+            Command::OpenHelp => {
+                self.help_return = self.state;
+                self.state = AppState::Help;
+            }
             Command::ToggleStats => match self.state {
                 AppState::Typing | AppState::Paused => {
                     self.settings.display.compact_mode = !self.settings.display.compact_mode;
@@ -243,13 +305,14 @@ impl App {
     }
 
     fn open_settings(&mut self) {
-        self.settings_menu = SettingsMenu::from_config(&self.settings);
+        self.settings_menu = SettingsMenu::from_config(&self.settings, &Theme::display_names());
         self.state = AppState::Settings;
     }
 
     fn commit_settings(&mut self) {
         self.settings = self.settings_menu.apply(&self.settings);
         self.theme = Theme::resolve(&self.settings.theme.name);
+        self.pools = WordPools::load(&self.settings.typing.language);
         self.audio.reconfigure(&self.settings.sounds);
         if let Err(error) = self.settings.save() {
             eprintln!("warning: failed to save settings: {error}");
@@ -290,6 +353,22 @@ impl App {
     fn open_config_menu(&mut self) {
         self.config_menu = ConfigMenu::from_config(&self.config);
         self.state = AppState::Menu;
+    }
+
+    fn exit_current_view(&mut self) {
+        match self.state {
+            AppState::Help => self.state = self.help_return,
+            _ => self.open_config_menu(),
+        }
+    }
+
+    fn acknowledge_first_run(&mut self) {
+        if !self.first_run {
+            return;
+        }
+        self.first_run = false;
+        let mut state = UiState::load();
+        state.acknowledge_first_run();
     }
 
     pub fn poll_timeout(&self) -> Duration {
@@ -365,7 +444,8 @@ fn install_panic_hook() {
         let _ = crossterm::execute!(
             stdout,
             crossterm::cursor::Show,
-            crossterm::terminal::LeaveAlternateScreen
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture
         );
         previous(info);
     }));

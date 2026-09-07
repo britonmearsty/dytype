@@ -51,7 +51,10 @@ pub struct Config {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThemeSettings {
-    #[serde(default = "default_theme_name", deserialize_with = "canonical_theme_name")]
+    #[serde(
+        default = "default_theme_name",
+        deserialize_with = "canonical_theme_name"
+    )]
     pub name: String,
 }
 
@@ -114,6 +117,8 @@ pub struct DisplaySettings {
     pub text_width: u16,
     #[serde(default)]
     pub compact_mode: bool,
+    #[serde(default = "default_true")]
+    pub mouse: bool,
 }
 
 impl Default for DisplaySettings {
@@ -125,6 +130,7 @@ impl Default for DisplaySettings {
             fps: default_fps(),
             text_width: 0,
             compact_mode: false,
+            mouse: true,
         }
     }
 }
@@ -205,10 +211,7 @@ mod tests {
     fn empty_toml_yields_defaults() {
         let config: Config = toml::from_str("").expect("defaults from empty toml");
         assert_eq!(config.theme.name, "Default");
-        assert_eq!(
-            config.typing.difficulty,
-            Difficulty::Normal
-        );
+        assert_eq!(config.typing.difficulty, Difficulty::Normal);
         assert!(config.sounds.enabled);
         assert_eq!(config.display.cursor.style, CursorStyle::Bar);
         assert!(config.display.cursor.blink);
@@ -243,10 +246,9 @@ mod tests {
 
     #[test]
     fn old_sound_config_gains_new_fields_by_default() {
-        let config: Config = toml::from_str(
-            "[sounds]\nenabled = true\nvolume = 1.0\nsound_pack = \"mechanical\"\n",
-        )
-        .expect("old sound config parses");
+        let config: Config =
+            toml::from_str("[sounds]\nenabled = true\nvolume = 1.0\nsound_pack = \"mechanical\"\n")
+                .expect("old sound config parses");
         assert!(config.sounds.enabled);
         assert_eq!(config.sounds.volume, 1.0);
         assert_eq!(config.sounds.sound_pack, SoundPack::Mechanical);
@@ -313,10 +315,9 @@ mod tests {
         // A config written by the very first release: no grouped sections,
         // only flat fields that no longer exist as-is. Every modern field
         // must fall back to its default instead of failing to parse.
-        let config: Config = toml::from_str(
-            "[sounds]\nenabled = true\nvolume = 0.7\n[practice]\nwords = 50\n",
-        )
-        .expect("old config parses");
+        let config: Config =
+            toml::from_str("[sounds]\nenabled = true\nvolume = 0.7\n[practice]\nwords = 50\n")
+                .expect("old config parses");
         assert!(config.sounds.enabled);
         assert_eq!(config.sounds.volume, 0.7);
         assert_eq!(config.theme.name, "Default");

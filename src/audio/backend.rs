@@ -397,11 +397,15 @@ mod tests {
         let loud = wav_bytes(&samples, 1.0);
         let quiet = wav_bytes(&samples, 0.5);
         let loud_i16: Vec<i16> = loud[44..]
-            .as_chunks::<2>().0.iter()
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| i16::from_le_bytes(*c))
             .collect();
         let quiet_i16: Vec<i16> = quiet[44..]
-            .as_chunks::<2>().0.iter()
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| i16::from_le_bytes(*c))
             .collect();
         for (l, q) in loud_i16.iter().zip(&quiet_i16) {
@@ -415,7 +419,9 @@ mod tests {
         let samples = [1000i16, -1000];
         let bytes = wav_bytes(&samples, 2.0);
         let data: Vec<i16> = bytes[44..]
-            .as_chunks::<2>().0.iter()
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| i16::from_le_bytes(*c))
             .collect();
         assert_eq!(data, samples);

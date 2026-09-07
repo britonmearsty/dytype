@@ -27,7 +27,9 @@ impl ResultsScreen {
         let lines = vec![
             Line::from(Span::styled(
                 "Test complete!",
-                Style::default().fg(title_color).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(title_color)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(Span::styled(
@@ -46,7 +48,7 @@ impl ResultsScreen {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "Enter: new test    Tab: config    F2: settings    F3: history    Esc: quit",
+                "Enter: new test    Tab: config    F1: help    F2: settings    F3: history    Esc: quit",
                 Style::default().fg(theme.muted),
             )),
         ];

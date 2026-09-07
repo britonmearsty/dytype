@@ -8,6 +8,8 @@ use crate::app::App;
 use crate::audio::settings::SoundPack;
 use crate::config::settings::{Config, CursorAnimation, CursorStyle};
 use crate::typing::generator::Difficulty;
+use crate::typing::words::available_languages;
+#[cfg(test)]
 use crate::ui::widgets::theme::THEMES;
 
 const PACKS: [SoundPack; 5] = [
@@ -18,10 +20,15 @@ const PACKS: [SoundPack; 5] = [
     SoundPack::None,
 ];
 
-const CURSOR_STYLES: [CursorStyle; 3] = [CursorStyle::Bar, CursorStyle::Block, CursorStyle::Underline];
+const CURSOR_STYLES: [CursorStyle; 3] =
+    [CursorStyle::Bar, CursorStyle::Block, CursorStyle::Underline];
 const CURSOR_ANIMATIONS: [CursorAnimation; 2] = [CursorAnimation::Smooth, CursorAnimation::Off];
-const DIFFICULTIES: [Difficulty; 4] = [Difficulty::Easy, Difficulty::Normal, Difficulty::Hard, Difficulty::Expert];
-const LANGUAGES: [&str; 1] = ["English"];
+const DIFFICULTIES: [Difficulty; 4] = [
+    Difficulty::Easy,
+    Difficulty::Normal,
+    Difficulty::Hard,
+    Difficulty::Expert,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Row {
@@ -29,6 +36,7 @@ enum Row {
     Cursor,
     CursorAnimation,
     Animations,
+    Mouse,
     Language,
     Difficulty,
     Punctuation,
@@ -39,11 +47,12 @@ enum Row {
 }
 
 impl Row {
-    const ALL: [Row; 11] = [
+    const ALL: [Row; 12] = [
         Row::Theme,
         Row::Cursor,
         Row::CursorAnimation,
         Row::Animations,
+        Row::Mouse,
         Row::Language,
         Row::Difficulty,
         Row::Punctuation,
@@ -59,6 +68,7 @@ impl Row {
             Row::Cursor => "Cursor",
             Row::CursorAnimation => "Cursor animation",
             Row::Animations => "Animations",
+            Row::Mouse => "Mouse",
             Row::Language => "Language",
             Row::Difficulty => "Difficulty",
             Row::Punctuation => "Punctuation",
@@ -77,9 +87,18 @@ struct Group {
 }
 
 const GROUPS: [Group; 3] = [
-    Group { title: "Appearance", first: 0 },
-    Group { title: "Typing", first: 4 },
-    Group { title: "Sounds", first: 8 },
+    Group {
+        title: "Appearance",
+        first: 0,
+    },
+    Group {
+        title: "Typing",
+        first: 5,
+    },
+    Group {
+        title: "Sounds",
+        first: 9,
+    },
 ];
 
 fn group_for(index: usize) -> &'static Group {
@@ -92,11 +111,14 @@ fn group_for(index: usize) -> &'static Group {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsMenu {
+    theme_names: Vec<String>,
     theme: usize,
+    languages: Vec<String>,
+    language: usize,
     cursor: usize,
     cursor_animation: usize,
     animations: bool,
-    language: usize,
+    mouse: bool,
     difficulty: usize,
     punctuation: bool,
     numbers: bool,
@@ -107,14 +129,18 @@ pub struct SettingsMenu {
 }
 
 impl SettingsMenu {
-    pub fn from_config(config: &Config) -> Self {
-        let position = |list: &[&str], value: &'static str| {
-            list.iter().position(|item| *item == value).unwrap_or(0)
-        };
+    pub fn from_config(config: &Config, theme_names: &[String]) -> Self {
+        let languages = available_languages();
         Self {
-            theme: THEMES
+            theme_names: theme_names.to_vec(),
+            theme: theme_names
                 .iter()
-                .position(|theme| theme.name.eq_ignore_ascii_case(&config.theme.name))
+                .position(|name| name.eq_ignore_ascii_case(&config.theme.name))
+                .unwrap_or(0),
+            languages: languages.clone(),
+            language: languages
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case(&config.typing.language))
                 .unwrap_or(0),
             cursor: CURSOR_STYLES
                 .iter()
@@ -125,7 +151,7 @@ impl SettingsMenu {
                 .position(|style| *style == config.display.cursor_animation)
                 .unwrap_or(0),
             animations: config.display.animations,
-            language: position(&LANGUAGES, "English"),
+            mouse: config.display.mouse,
             difficulty: DIFFICULTIES
                 .iter()
                 .position(|difficulty| *difficulty == config.typing.difficulty)
@@ -145,11 +171,12 @@ impl SettingsMenu {
     /// Merges every managed option into a fresh copy of `base`.
     pub fn apply(&self, base: &Config) -> Config {
         let mut config = base.clone();
-        config.theme.name = THEMES[self.theme].name.to_owned();
+        config.theme.name = self.theme_names[self.theme].clone();
         config.display.cursor.style = CURSOR_STYLES[self.cursor];
         config.display.cursor_animation = CURSOR_ANIMATIONS[self.cursor_animation];
         config.display.animations = self.animations;
-        config.typing.language = LANGUAGES[self.language].to_owned();
+        config.display.mouse = self.mouse;
+        config.typing.language = self.languages[self.language].clone();
         config.typing.difficulty = DIFFICULTIES[self.difficulty];
         config.typing.punctuation = self.punctuation;
         config.typing.numbers = self.numbers;
@@ -163,24 +190,52 @@ impl SettingsMenu {
         self.selected = (self.selected as i8 + dir).rem_euclid(Row::ALL.len() as i8) as usize;
     }
 
+    /// Selects the row whose rendered line sits at content row `y` inside
+    /// `area`, accounting for the group header lines. Used by mouse clicks.
+    pub fn row_at(&self, area: Rect, y: u16) -> Option<usize> {
+        let first = area.y.saturating_add(2);
+        if y < first {
+            return None;
+        }
+        let mut row_y = first;
+        for (i, _) in Row::ALL.iter().enumerate() {
+            if group_for(i).first == i {
+                row_y = row_y.saturating_add(2);
+            }
+            if y == row_y {
+                return Some(i);
+            }
+            row_y = row_y.saturating_add(1);
+        }
+        None
+    }
+
+    pub fn select_row(&mut self, index: usize) {
+        if index < Row::ALL.len() {
+            self.selected = index;
+        }
+    }
+
     pub fn cycle(&mut self, dir: i8) {
         match Row::ALL[self.selected] {
             Row::Theme => {
-                self.theme = (self.theme as i8 + dir).rem_euclid(THEMES.len() as i8) as usize;
+                self.theme =
+                    (self.theme as i8 + dir).rem_euclid(self.theme_names.len() as i8) as usize;
             }
             Row::Cursor => {
                 self.cursor =
                     (self.cursor as i8 + dir).rem_euclid(CURSOR_STYLES.len() as i8) as usize;
             }
             Row::CursorAnimation => {
-                self.cursor_animation =
-                    (self.cursor_animation as i8 + dir).rem_euclid(CURSOR_ANIMATIONS.len() as i8)
-                        as usize;
+                self.cursor_animation = (self.cursor_animation as i8 + dir)
+                    .rem_euclid(CURSOR_ANIMATIONS.len() as i8)
+                    as usize;
             }
             Row::Animations => self.animations = !self.animations,
+            Row::Mouse => self.mouse = !self.mouse,
             Row::Language => {
-                self.language = (self.language as i8 + dir).rem_euclid(LANGUAGES.len() as i8)
-                    as usize;
+                self.language =
+                    (self.language as i8 + dir).rem_euclid(self.languages.len() as i8) as usize;
             }
             Row::Difficulty => {
                 self.difficulty =
@@ -204,12 +259,14 @@ impl SettingsMenu {
 
     fn value_text(&self, row: Row) -> String {
         match row {
-            Row::Theme => THEMES[self.theme].name.to_owned(),
+            Row::Theme => self.theme_names[self.theme].clone(),
             Row::Cursor => cursor_label(CURSOR_STYLES[self.cursor]).to_owned(),
-            Row::CursorAnimation => cursor_animation_label(CURSOR_ANIMATIONS[self.cursor_animation])
-                .to_owned(),
+            Row::CursorAnimation => {
+                cursor_animation_label(CURSOR_ANIMATIONS[self.cursor_animation]).to_owned()
+            }
             Row::Animations => Self::on_off(self.animations).to_owned(),
-            Row::Language => LANGUAGES[self.language].to_owned(),
+            Row::Mouse => Self::on_off(self.mouse).to_owned(),
+            Row::Language => self.languages[self.language].clone(),
             Row::Difficulty => title_case(DIFFICULTIES[self.difficulty].label()).to_owned(),
             Row::Punctuation => Self::on_off(self.punctuation).to_owned(),
             Row::Numbers => Self::on_off(self.numbers).to_owned(),
@@ -217,7 +274,8 @@ impl SettingsMenu {
             Row::Volume => {
                 let bar_width = 10;
                 let filled = usize::from(self.volume_pct) * bar_width / 100;
-                let bar: String = "█".repeat(filled) + &"░".repeat(bar_width.saturating_sub(filled));
+                let bar: String =
+                    "█".repeat(filled) + &"░".repeat(bar_width.saturating_sub(filled));
                 format!("{bar} {}%", self.volume_pct)
             }
             Row::Pack => PACKS[self.pack].label().to_owned(),
@@ -270,7 +328,9 @@ impl SettingsScreen {
             let selected = i == menu.selected;
             let marker = if selected { "▸" } else { " " };
             let value_style = if selected {
-                Style::default().fg(theme.correct).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.correct)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.muted)
             };
@@ -294,7 +354,9 @@ impl SettingsScreen {
             .borders(Borders::ALL)
             .style(Style::default().bg(theme.background));
         frame.render_widget(
-            Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+            Paragraph::new(lines)
+                .block(block)
+                .wrap(Wrap { trim: false }),
             area,
         );
     }
@@ -304,8 +366,12 @@ impl SettingsScreen {
 mod tests {
     use super::*;
 
+    fn builtin_theme_names() -> Vec<String> {
+        THEMES.iter().map(|theme| theme.name.to_owned()).collect()
+    }
+
     fn default_menu() -> SettingsMenu {
-        SettingsMenu::from_config(&Config::default())
+        SettingsMenu::from_config(&Config::default(), &builtin_theme_names())
     }
 
     #[test]
@@ -330,14 +396,23 @@ mod tests {
         menu.cycle(1);
         let applied = menu.apply(&Config::default());
         assert!(!applied.display.animations);
+
+        menu.move_selection(1); // Mouse
+        menu.cycle(1);
+        let applied = menu.apply(&Config::default());
+        assert!(!applied.display.mouse);
     }
 
     #[test]
     fn typing_rows_cycle_and_apply() {
         let mut menu = default_menu();
-        menu.move_selection(4); // Language
-        menu.cycle(1); // wraps within English
-        menu.move_selection(1); // Difficulty
+        menu.move_selection(5); // Language
+        menu.cycle(1); // English -> next available language
+        let applied_language = menu.apply(&Config::default()).typing.language;
+        assert_ne!(applied_language, "English");
+        assert!(available_languages().contains(&applied_language));
+        let mut menu = default_menu();
+        menu.move_selection(6); // Difficulty
         menu.cycle(1); // Normal -> Hard
         menu.move_selection(1); // Punctuation
         menu.cycle(1);
@@ -353,7 +428,7 @@ mod tests {
     #[test]
     fn volume_cycles_in_five_percent_steps_and_clamps() {
         let mut menu = default_menu();
-        menu.move_selection(9); // Volume
+        menu.move_selection(10); // Volume
         menu.cycle(1);
         assert_eq!(menu.apply(&Config::default()).sounds.volume, 0.7);
         for _ in 0..60 {
@@ -369,14 +444,20 @@ mod tests {
     #[test]
     fn sound_rows_cycle_and_apply() {
         let mut menu = default_menu();
-        menu.move_selection(8); // Sounds
+        menu.move_selection(9); // Sounds
         menu.cycle(1); // On -> Off
         assert!(!menu.apply(&Config::default()).sounds.enabled);
         menu.move_selection(2); // Pack
         menu.cycle(4);
-        assert_eq!(menu.apply(&Config::default()).sounds.sound_pack, SoundPack::None);
+        assert_eq!(
+            menu.apply(&Config::default()).sounds.sound_pack,
+            SoundPack::None
+        );
         menu.cycle(1);
-        assert_eq!(menu.apply(&Config::default()).sounds.sound_pack, SoundPack::Mechanical);
+        assert_eq!(
+            menu.apply(&Config::default()).sounds.sound_pack,
+            SoundPack::Mechanical
+        );
     }
 
     #[test]
@@ -386,7 +467,7 @@ mod tests {
         with_fields.sounds.error = false;
         with_fields.sounds.complete = false;
         with_fields.typing.backspace = false;
-        let menu = SettingsMenu::from_config(&with_fields);
+        let menu = SettingsMenu::from_config(&with_fields, &builtin_theme_names());
         let applied = menu.apply(&with_fields);
         assert!(!applied.sounds.error);
         assert!(!applied.sounds.complete);
@@ -400,12 +481,33 @@ mod tests {
         config.display.cursor.style = CursorStyle::Block;
         config.display.cursor_animation = CursorAnimation::Off;
         config.display.animations = false;
+        config.display.mouse = false;
         config.typing.difficulty = Difficulty::Expert;
         config.typing.numbers = true;
         config.sounds.enabled = false;
         config.sounds.sound_pack = SoundPack::Retro;
         config.sounds.volume = 0.4;
-        assert_eq!(SettingsMenu::from_config(&config).apply(&config), config);
+        assert_eq!(
+            SettingsMenu::from_config(&config, &builtin_theme_names()).apply(&config),
+            config
+        );
+    }
+
+    #[test]
+    fn custom_theme_names_cycle_and_apply() {
+        let names = vec![
+            "Default".to_owned(),
+            "Monokai".to_owned(),
+            "Sunset".to_owned(),
+        ];
+        let mut config = Config::default();
+        config.theme.name = "Monokai".to_owned();
+        let mut menu = SettingsMenu::from_config(&config, &names);
+        menu.cycle(1); // Monokai -> Sunset
+        assert_eq!(menu.value_text(Row::Theme), "Sunset");
+        assert_eq!(menu.apply(&Config::default()).theme.name, "Sunset");
+        menu.cycle(-2); // back through the start of the custom list
+        assert_eq!(menu.value_text(Row::Theme), "Default");
     }
 
     #[test]
@@ -419,5 +521,31 @@ mod tests {
     fn title_case_pretty_prints() {
         assert_eq!(title_case("normal"), "Normal");
         assert_eq!(title_case(""), "");
+    }
+
+    #[test]
+    fn row_at_maps_click_y_to_row_skipping_group_headers() {
+        let menu = default_menu();
+        let area = Rect::new(0, 0, 80, 30);
+        // Border (y 0) then content: blank, header + blank, so the first
+        // appearance row "Theme" renders at y=4.
+        assert_eq!(menu.row_at(area, 4), Some(0)); // Theme
+        assert_eq!(menu.row_at(area, 5), Some(1)); // Cursor
+        assert_eq!(menu.row_at(area, 8), Some(4)); // Mouse
+        // After Mouse, "Typing" group adds header + blank before Language.
+        assert_eq!(menu.row_at(area, 11), Some(5)); // Language
+        assert_eq!(menu.row_at(area, 18), Some(10)); // Volume
+        assert_eq!(menu.row_at(area, 2), None); // inside a header
+        assert_eq!(menu.row_at(area, 20), None); // beyond the last row
+        assert_eq!(menu.row_at(area, 0), None); // on the top border
+    }
+
+    #[test]
+    fn select_row_clamps_out_of_range() {
+        let mut menu = default_menu();
+        menu.select_row(99);
+        assert_eq!(menu.selected, 0);
+        menu.select_row(4); // Mouse
+        assert_eq!(menu.selected, 4);
     }
 }

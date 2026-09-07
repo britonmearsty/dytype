@@ -1,6 +1,6 @@
 use super::backend::{SilentBackend, SoundBackend, WaveBackend};
 use super::event::SoundEvent;
-use super::settings::{SoundSettings, SoundPack};
+use super::settings::{SoundPack, SoundSettings};
 
 /// Owns the active sound backend and routes engine events to it, honoring the
 /// user's audio settings. The engine and UI never touch backends directly.

@@ -1,4 +1,8 @@
+use std::path::Path;
+use std::sync::OnceLock;
+
 use ratatui::style::Color;
+use serde::Deserialize;
 
 /// A color palette for the whole TUI. Screens never hard-code colors at
 /// call sites; they read the fields here so themes are pure data.
@@ -106,17 +110,155 @@ pub const CUSTOM: Theme = Theme {
 };
 
 /// Every built-in theme, in menu order.
-pub const THEMES: [Theme; 7] = [
-    DEFAULT, MONOKAI, DRACULA, GRUVBOX, NORD, CATPPUCCIN, CUSTOM,
-];
+pub const THEMES: [Theme; 7] = [DEFAULT, MONOKAI, DRACULA, GRUVBOX, NORD, CATPPUCCIN, CUSTOM];
+
+/// User theme files loaded from `~/.config/dytype/themes/*.toml`, resolved
+/// once and reused for every lookup while the app runs.
+static USER_THEMES: OnceLock<Vec<Theme>> = OnceLock::new();
+
+/// Raw representation of a theme TOML file. Every field is optional; missing
+/// colors fall back to the Default palette.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct ThemeFile {
+    name: Option<String>,
+    background: Option<String>,
+    foreground: Option<String>,
+    text: Option<String>,
+    correct: Option<String>,
+    incorrect: Option<String>,
+    cursor: Option<String>,
+    muted: Option<String>,
+    accent: Option<String>,
+}
+
+/// Parses a color written as `#RRGGBB`, `#RGB` or one of the common named
+/// colors, returning `None` for anything else so themes degrade gracefully.
+fn parse_color(s: &str) -> Option<Color> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix('#') {
+        let digits: Vec<u8> = hex
+            .chars()
+            .filter(|c| c.is_ascii_hexdigit())
+            .filter_map(|c| c.to_digit(16).map(|d| d as u8))
+            .collect();
+        return match digits.len() {
+            6 => Some(Color::Rgb(
+                digits[0] << 4 | digits[1],
+                digits[2] << 4 | digits[3],
+                digits[4] << 4 | digits[5],
+            )),
+            3 => Some(Color::Rgb(
+                digits[0] << 4 | digits[0],
+                digits[1] << 4 | digits[1],
+                digits[2] << 4 | digits[2],
+            )),
+            _ => None,
+        };
+    }
+    match s.to_ascii_lowercase().as_str() {
+        "black" => Some(Color::Black),
+        "white" => Some(Color::White),
+        "gray" | "grey" => Some(Color::Gray),
+        "darkgray" | "darkgrey" => Some(Color::DarkGray),
+        "red" => Some(Color::Red),
+        "green" => Some(Color::Green),
+        "yellow" => Some(Color::Yellow),
+        "blue" => Some(Color::Blue),
+        "magenta" => Some(Color::Magenta),
+        "cyan" => Some(Color::Cyan),
+        _ => None,
+    }
+}
+
+/// Leaks an owned string so themes can carry `&'static str` names while
+/// staying `Copy`. A handful of one-time theme loads at startup is fine.
+fn leak(name: String) -> &'static str {
+    Box::leak(name.into_boxed_str())
+}
+
+impl ThemeFile {
+    fn build(self) -> Option<Theme> {
+        let raw = self.name?;
+        let name = raw.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let base = DEFAULT;
+        let color = |value: Option<String>, fallback: Color| {
+            value.as_deref().and_then(parse_color).unwrap_or(fallback)
+        };
+        Some(Theme {
+            name: leak(name.to_owned()),
+            background: color(self.background, base.background),
+            foreground: color(self.foreground, base.foreground),
+            text: color(self.text, base.text),
+            correct: color(self.correct, base.correct),
+            incorrect: color(self.incorrect, base.incorrect),
+            cursor: color(self.cursor, base.cursor),
+            muted: color(self.muted, base.muted),
+            accent: color(self.accent, base.accent),
+        })
+    }
+}
+
+/// Loads every valid `*.toml` theme from `dir`, skipping unreadable or
+/// malformed files. Returns an empty list when the directory is absent.
+pub fn load_user_themes(dir: &Path) -> Vec<Theme> {
+    let mut themes = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return themes;
+    };
+    let mut files: Vec<_> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+        .collect();
+    files.sort();
+    for path in files {
+        if let Ok(content) = std::fs::read_to_string(path)
+            && let Ok(file) = toml::from_str::<ThemeFile>(&content)
+            && let Some(theme) = file.build()
+        {
+            themes.push(theme);
+        }
+    }
+    themes
+}
+
+/// The directory user themes are read from.
+pub fn user_theme_dir() -> Option<std::path::PathBuf> {
+    let dirs = directories::ProjectDirs::from("com", "dytype", "dytype")?;
+    Some(dirs.config_dir().join("themes"))
+}
+
+/// User themes, reading them from disk on first use.
+pub fn user_themes() -> &'static [Theme] {
+    USER_THEMES
+        .get_or_init(|| match user_theme_dir() {
+            Some(dir) => load_user_themes(&dir),
+            None => Vec::new(),
+        })
+        .as_slice()
+}
 
 impl Theme {
-    /// The theme whose `name` matches, if any.
-    pub fn by_name(name: &str) -> Option<Theme> {
+    /// The theme whose `name` matches among the built-ins and `user` themes.
+    pub fn by_name_in(user: &[Theme], name: &str) -> Option<Theme> {
         THEMES
             .iter()
+            .chain(user)
             .copied()
             .find(|theme| theme.name.eq_ignore_ascii_case(name))
+    }
+
+    /// The theme whose `name` matches, if any.
+    pub fn by_name(name: &str) -> Option<Theme> {
+        Self::by_name_in(user_themes(), name)
+    }
+
+    /// Look up a theme by name among built-ins and `user` themes.
+    pub fn resolve_in(user: &[Theme], name: &str) -> Option<Theme> {
+        Self::by_name_in(user, name)
     }
 
     /// Look up a theme by name, falling back to Default.
@@ -124,7 +266,8 @@ impl Theme {
         Self::by_name(name).unwrap_or(DEFAULT)
     }
 
-    /// The canonical spelling of a built-in theme name, or the name unchanged.
+    /// The canonical spelling of a theme name (built-in or user), or the
+    /// name unchanged.
     pub fn canonical(name: &str) -> String {
         match Self::by_name(name) {
             Some(theme) => theme.name.to_owned(),
@@ -132,9 +275,22 @@ impl Theme {
         }
     }
 
+    /// Every selectable theme name, built-ins first then user themes, in
+    /// the order the settings picker cycles through.
+    pub fn display_names() -> Vec<String> {
+        THEMES
+            .iter()
+            .map(|theme| theme.name.to_owned())
+            .chain(user_themes().iter().map(|theme| theme.name.to_owned()))
+            .collect()
+    }
+
     /// Numeric name for a theme, matching `by_name` (case-insensitive "Default").
     pub fn index(&self) -> usize {
-        THEMES.iter().position(|theme| theme.name == self.name).unwrap_or(0)
+        THEMES
+            .iter()
+            .position(|theme| theme.name == self.name)
+            .unwrap_or(0)
     }
 
     /// Convert a `Color` into animation-friendly RGB triples. Named colors
@@ -167,7 +323,15 @@ mod tests {
         let names: Vec<_> = THEMES.iter().map(|theme| theme.name).collect();
         assert_eq!(
             names,
-            vec!["Default", "Monokai", "Dracula", "Gruvbox", "Nord", "Catppuccin", "Custom"]
+            vec![
+                "Default",
+                "Monokai",
+                "Dracula",
+                "Gruvbox",
+                "Nord",
+                "Catppuccin",
+                "Custom"
+            ]
         );
         for theme in &THEMES {
             assert!(!theme.name.is_empty());
@@ -213,5 +377,73 @@ mod tests {
         assert_eq!(MONOKAI.index(), 1);
         assert_eq!(CATPPUCCIN.index(), 5);
         assert_eq!(CUSTOM.index(), 6);
+    }
+
+    #[test]
+    fn parse_color_accepts_hex_and_named() {
+        assert_eq!(parse_color("#66d99e"), Some(rgb(0x66, 0xD9, 0x9E)));
+        assert_eq!(parse_color("#FFF"), Some(Color::Rgb(255, 255, 255)));
+        assert_eq!(parse_color("black"), Some(Color::Black));
+        assert_eq!(parse_color("GRAY"), Some(Color::Gray));
+        assert_eq!(parse_color("#12"), None);
+        assert_eq!(parse_color("navy"), None);
+        assert_eq!(parse_color(""), None);
+    }
+
+    #[test]
+    fn theme_file_defaults_missing_colors_to_default_palette() {
+        let file = ThemeFile {
+            name: Some("Sunset".to_owned()),
+            correct: Some("#ff0000".to_owned()),
+            ..ThemeFile::default()
+        };
+        let theme = file.build().expect("theme from partial file");
+        assert_eq!(theme.name, "Sunset");
+        assert_eq!(theme.correct, rgb(0xFF, 0, 0));
+        assert_eq!(theme.background, DEFAULT.background);
+        assert_eq!(theme.accent, DEFAULT.accent);
+    }
+
+    #[test]
+    fn theme_file_requires_a_name() {
+        let none = ThemeFile {
+            name: None,
+            ..ThemeFile::default()
+        };
+        let blank = ThemeFile {
+            name: Some("  ".to_owned()),
+            ..ThemeFile::default()
+        };
+        assert!(none.build().is_none());
+        assert!(blank.build().is_none());
+    }
+
+    #[test]
+    fn user_themes_merge_after_builtins_and_resolve() {
+        let dir = std::env::temp_dir().join(format!("dytype-themes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp themes dir");
+        std::fs::write(
+            dir.join("sunset.toml"),
+            "name = \"Sunset\"\ncorrect = \"#ff0000\"\n",
+        )
+        .expect("write sunset");
+        std::fs::write(dir.join("broken.toml"), "not = valid toml [").expect("write broken");
+
+        let themes = load_user_themes(&dir);
+        assert_eq!(themes.len(), 1);
+        assert_eq!(themes[0].name, "Sunset");
+        assert_eq!(themes[0].correct, rgb(0xFF, 0, 0));
+        assert_eq!(themes[0].background, DEFAULT.background);
+
+        assert_eq!(Theme::by_name_in(&themes, "sunset"), Some(themes[0]));
+        assert_eq!(Theme::resolve_in(&themes, "Sunset"), Some(themes[0]));
+
+        let builtins = THEMES.iter().map(|theme| theme.name.to_owned());
+        let names: Vec<String> = builtins
+            .chain(themes.iter().map(|theme| theme.name.to_owned()))
+            .collect();
+        assert!(names.starts_with(&["Default".to_owned(), "Monokai".to_owned()]));
+        assert!(names.contains(&"Sunset".to_owned()));
     }
 }

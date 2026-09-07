@@ -118,14 +118,16 @@ pub fn daily(results: &[TestResult], limit: usize) -> Vec<DailyPoint> {
         .into_iter()
         .rev()
         .take(limit)
-        .map(|(day, (tests, wpm_sum, acc_sum, errors, first_ts))| DailyPoint {
-            day,
-            label: calendar::short_date(first_ts),
-            tests,
-            wpm: wpm_sum / tests as f64,
-            accuracy: acc_sum / tests as f64,
-            errors,
-        })
+        .map(
+            |(day, (tests, wpm_sum, acc_sum, errors, first_ts))| DailyPoint {
+                day,
+                label: calendar::short_date(first_ts),
+                tests,
+                wpm: wpm_sum / tests as f64,
+                accuracy: acc_sum / tests as f64,
+                errors,
+            },
+        )
         .rev()
         .collect()
 }
@@ -142,16 +144,115 @@ pub fn character_errors(results: &[TestResult], limit: usize) -> Vec<CharStat> {
     }
     let mut stats: Vec<CharStat> = counts
         .into_iter()
-        .map(|(ch, (typed, errors))| CharStat { ch, typed, errors })
+        .map(|(ch, (typed, errors))| CharStat {
+            ch,
+            typed,
+            errors,
+            ..CharStat::default()
+        })
         .filter(|s| s.errors > 0)
+        .collect();
+    stats.sort_by(|a, b| {
+        b.errors.cmp(&a.errors).then(
+            b.rate()
+                .partial_cmp(&a.rate())
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+    stats.truncate(limit);
+    stats
+}
+
+/// An error-prone character sequence (bigram or trigram): what was expected
+/// plus the `typed`/`errors` accumulated across history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextStat {
+    pub ngram: String,
+    pub typed: u32,
+    pub errors: u32,
+}
+
+impl ContextStat {
+    pub fn rate(&self) -> f64 {
+        if self.typed == 0 {
+            0.0
+        } else {
+            self.errors as f64 / self.typed as f64 * 100.0
+        }
+    }
+}
+
+fn mark(prefix: &mut String, c: Option<char>) {
+    match c {
+        Some(c) => prefix.push(c),
+        // No expected character before this one: the start of the text/word.
+        None => prefix.push('^'),
+    }
+}
+
+/// The `depth` characters of context (the previous `depth` expected chars)
+/// that precede a character, gathered with that character into a readable
+/// ngram label.
+fn context_label(prev2: Option<char>, prev: Option<char>, ch: char, depth: usize) -> String {
+    let mut ngram = String::new();
+    if depth >= 2 {
+        mark(&mut ngram, prev2);
+    }
+    mark(&mut ngram, prev);
+    ngram.push(ch);
+    ngram
+}
+
+/// Weakest bigrams: the (previous char, current char) pairs with the most
+/// errors, merged across history. `depth` 1 = bigrams, 2 = trigrams.
+/// A context key is `(prev2, prev, ch)`; the tally is `(typed, errors)`.
+type ContextKey = (Option<char>, Option<char>, char);
+type ContextTally = (u32, u32);
+
+pub fn context_errors(results: &[TestResult], depth: usize, limit: usize) -> Vec<ContextStat> {
+    let mut counts: BTreeMap<ContextKey, ContextTally> = BTreeMap::new();
+    for r in results {
+        for stat in &r.char_stats {
+            let (prev, prev2) = if depth >= 2 {
+                (stat.prev, stat.prev2)
+            } else {
+                (stat.prev, None)
+            };
+            let entry = counts.entry((prev2, prev, stat.ch)).or_insert((0, 0));
+            entry.0 += stat.typed;
+            entry.1 += stat.errors;
+        }
+    }
+    let mut stats: Vec<ContextStat> = counts
+        .into_iter()
+        .filter(|(_, (_, errors))| *errors > 0)
+        .map(|((prev2, prev, ch), (typed, errors))| ContextStat {
+            ngram: context_label(prev2, prev, ch, depth),
+            typed,
+            errors,
+        })
         .collect();
     stats.sort_by(|a, b| {
         b.errors
             .cmp(&a.errors)
-            .then(b.rate().partial_cmp(&a.rate()).unwrap_or(std::cmp::Ordering::Equal))
+            .then(
+                b.rate()
+                    .partial_cmp(&a.rate())
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+            .then(a.ngram.cmp(&b.ngram))
     });
     stats.truncate(limit);
     stats
+}
+
+/// Convenience wrappers for the two useful depths.
+pub fn bigram_errors(results: &[TestResult], limit: usize) -> Vec<ContextStat> {
+    context_errors(results, 1, limit)
+}
+
+pub fn trigram_errors(results: &[TestResult], limit: usize) -> Vec<ContextStat> {
+    context_errors(results, 2, limit)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,6 +344,8 @@ mod tests {
                     ch: 'e',
                     typed: 10,
                     errors: errors as u32,
+                    prev: Some('h'),
+                    prev2: Some('t'),
                 }]
             } else {
                 Vec::new()
@@ -272,7 +375,11 @@ mod tests {
 
     #[test]
     fn best_progression_is_running_max() {
-        let results = vec![sample(1, 50.0, 90.0, 0, 0), sample(2, 40.0, 90.0, 0, 0), sample(3, 80.0, 95.0, 0, 0)];
+        let results = vec![
+            sample(1, 50.0, 90.0, 0, 0),
+            sample(2, 40.0, 90.0, 0, 0),
+            sample(3, 80.0, 95.0, 0, 0),
+        ];
         assert_eq!(best_progression(&results), vec![50.0, 50.0, 80.0]);
     }
 
@@ -322,25 +429,99 @@ mod tests {
 
     #[test]
     fn character_errors_merge_across_tests() {
-        let results = vec![sample(1, 60.0, 90.0, 3, 0), sample(2, 60.0, 90.0, 4, 0)];
+        let results = vec![sample(1, 50.0, 90.0, 3, 0), sample(2, 80.0, 95.0, 2, 0)];
         let errors = character_errors(&results, 5);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].ch, 'e');
-        assert_eq!(errors[0].errors, 7);
         assert_eq!(errors[0].typed, 20);
+        assert_eq!(errors[0].errors, 5);
+    }
+
+    #[test]
+    fn bigram_errors_aggregate_by_context() {
+        // Two tests erroring on 'e' — one after 'h', one after 't' —
+        // land in separate bigrams.
+        let mut a = sample(1, 50.0, 90.0, 1, 0);
+        a.char_stats = vec![CharStat {
+            ch: 'e',
+            typed: 10,
+            errors: 2,
+            prev: Some('h'),
+            prev2: Some('t'),
+        }];
+        let mut b = sample(2, 60.0, 95.0, 1, 0);
+        b.char_stats = vec![CharStat {
+            ch: 'e',
+            typed: 8,
+            errors: 1,
+            prev: Some('t'),
+            prev2: None,
+        }];
+        let bigrams = bigram_errors(&[a, b], 10);
+        let he = bigrams.iter().find(|s| s.ngram == "he").expect("he bigram");
+        assert_eq!((he.typed, he.errors), (10, 2));
+        let te = bigrams.iter().find(|s| s.ngram == "te").expect("te bigram");
+        assert_eq!((te.typed, te.errors), (8, 1));
+    }
+
+    #[test]
+    fn trigram_errors_include_two_chars_of_context() {
+        let mut result = sample(1, 50.0, 90.0, 1, 0);
+        result.char_stats = vec![CharStat {
+            ch: 'r',
+            typed: 12,
+            errors: 3,
+            prev: Some('e'),
+            prev2: Some('h'),
+        }];
+        let trigrams = trigram_errors(&[result], 10);
+        assert_eq!(trigrams.len(), 1);
+        assert_eq!(trigrams[0].ngram, "her");
+        assert_eq!((trigrams[0].typed, trigrams[0].errors), (12, 3));
+        assert!((24.0..=26.0).contains(&trigrams[0].rate()));
+    }
+
+    #[test]
+    fn bigram_ordering_prefers_higher_rate_after_error_tie() {
+        // Same error count (1) but "xy" was typed once (100% rate) vs "ab"
+        // typed ten times (10% rate): the rarest strike wins the tie.
+        let mut a = sample(1, 50.0, 90.0, 1, 0);
+        a.char_stats = vec![CharStat {
+            ch: 'y',
+            typed: 1,
+            errors: 1,
+            prev: Some('x'),
+            prev2: None,
+        }];
+        let mut b = sample(2, 50.0, 90.0, 1, 0);
+        b.char_stats = vec![CharStat {
+            ch: 'b',
+            typed: 10,
+            errors: 1,
+            prev: Some('a'),
+            prev2: None,
+        }];
+        let bigrams = bigram_errors(&[a, b], 10);
+        assert_eq!(bigrams.first().map(|s| s.ngram.as_str()), Some("xy"));
     }
 
     #[test]
     fn duration_buckets_map_ranges() {
         assert_eq!(DurationBucket::from_millis(29_000), DurationBucket::Under30);
         assert_eq!(DurationBucket::from_millis(30_000), DurationBucket::Under60);
-        assert_eq!(DurationBucket::from_millis(119_000), DurationBucket::Under120);
-        assert_eq!(DurationBucket::from_millis(299_000), DurationBucket::Under300);
-        assert_eq!(DurationBucket::from_millis(301_000), DurationBucket::Over300);
-        let results = vec![
-            sample(1, 60.0, 95.0, 0, 0),
-            sample(2, 60.0, 95.0, 0, 0),
-        ];
+        assert_eq!(
+            DurationBucket::from_millis(119_000),
+            DurationBucket::Under120
+        );
+        assert_eq!(
+            DurationBucket::from_millis(299_000),
+            DurationBucket::Under300
+        );
+        assert_eq!(
+            DurationBucket::from_millis(301_000),
+            DurationBucket::Over300
+        );
+        let results = vec![sample(1, 60.0, 95.0, 0, 0), sample(2, 60.0, 95.0, 0, 0)];
         let distribution = duration_distribution(&results);
         assert_eq!(distribution[0], (DurationBucket::Under30, 0));
         assert_eq!(distribution[1], (DurationBucket::Under60, 2));

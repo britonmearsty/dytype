@@ -53,15 +53,15 @@ pub fn level_from_xp(total_xp: u64) -> LevelInfo {
 }
 
 pub fn total_xp(results: &[TestResult]) -> u64 {
-    results
-        .iter()
-        .map(|r| xp_for_test(r.wpm, r.accuracy))
-        .sum()
+    results.iter().map(|r| xp_for_test(r.wpm, r.accuracy)).sum()
 }
 
 /// Longest run of consecutive calendar days that contain at least one test.
 pub fn longest_streak(results: &[TestResult]) -> u32 {
-    let mut days: Vec<i64> = results.iter().map(|r| calendar::day_key(r.timestamp)).collect();
+    let mut days: Vec<i64> = results
+        .iter()
+        .map(|r| calendar::day_key(r.timestamp))
+        .collect();
     days.sort_unstable();
     days.dedup();
     let mut best = 0u32;
@@ -178,6 +178,8 @@ mod tests {
                     ch: 'e',
                     typed: 10,
                     errors,
+                    prev: Some('h'),
+                    prev2: None,
                 }]
             } else {
                 Vec::new()
@@ -218,7 +220,10 @@ mod tests {
         assert_eq!(longest_streak(&[]), 0);
         assert_eq!(longest_streak(&[r(1, 0)]), 1);
         assert_eq!(longest_streak(&[r(1, 0), r(2, 1), r(3, 2)]), 3);
-        assert_eq!(longest_streak(&[r(1, 0), r(2, 2), r(3, 3), r(4, 6), r(5, 7)]), 2);
+        assert_eq!(
+            longest_streak(&[r(1, 0), r(2, 2), r(3, 3), r(4, 6), r(5, 7)]),
+            2
+        );
         // Duplicate days don't inflate the streak.
         assert_eq!(longest_streak(&[r(1, 0), r(2, 0), r(3, 1)]), 2);
     }

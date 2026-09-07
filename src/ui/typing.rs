@@ -22,9 +22,13 @@ enum CursorGlyph {
 pub struct TypingScreen;
 
 fn stats_height(height: u16) -> u16 {
-    if height >= 24 { 5 }
-    else if height >= 14 { 3 }
-    else { 0 }
+    if height >= 24 {
+        5
+    } else if height >= 14 {
+        3
+    } else {
+        0
+    }
 }
 
 impl TypingScreen {
@@ -37,8 +41,8 @@ impl TypingScreen {
         if stats_h == 0 {
             render_prompt(frame, area, app);
         } else {
-            let chunks = Layout::vertical([Constraint::Min(3), Constraint::Length(stats_h)])
-                .split(area);
+            let chunks =
+                Layout::vertical([Constraint::Min(3), Constraint::Length(stats_h)]).split(area);
             render_prompt(frame, chunks[0], app);
             render_stats(frame, chunks[1], app);
         }
@@ -48,7 +52,11 @@ impl TypingScreen {
 fn render_prompt(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let test = &app.engine.test;
     let animations_on = app.settings.display.animations;
-    let title = if test.is_paused() { " dytype · paused " } else { " dytype " };
+    let title = if test.is_paused() {
+        " dytype · paused "
+    } else {
+        " dytype "
+    };
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -74,11 +82,12 @@ fn render_prompt(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let frame_now = app.anim.frame_now;
     let cursor_f = app.anim.cursor.current_x;
     let cursor_idx = (cursor_f.floor() as usize).min(test.chars.len());
-    let (cursor_row, cursor_col) = cursor_position(&wrapped, cursor_idx);
+    let (cursor_row, cursor_col) = cursor_position(&wrapped, &test.chars, cursor_idx);
     let frac = cursor_f - cursor_f.floor();
 
     let blink_alpha = if animations_on && app.settings.display.cursor.blink {
-        app.anim.blink_alpha(frame_now, app.settings.display.cursor.blink_speed)
+        app.anim
+            .blink_alpha(frame_now, app.settings.display.cursor.blink_speed)
     } else {
         1.0
     };
@@ -111,7 +120,17 @@ fn render_prompt(frame: &mut Frame<'_>, area: Rect, app: &App) {
             })
             .collect();
         if row == cursor_row {
-            apply_cursor(&mut spans, cursor_col, inner.width as usize, glyph, frac, blink_alpha, pop, app.theme, snap);
+            apply_cursor(
+                &mut spans,
+                cursor_col,
+                inner.width as usize,
+                glyph,
+                frac,
+                blink_alpha,
+                pop,
+                app.theme,
+                snap,
+            );
         }
         lines.push(Line::from(spans));
     }
@@ -131,7 +150,7 @@ fn render_stats(frame: &mut Frame<'_>, area: Rect, app: &App) {
         }
     };
     let hints = format!(
-        "[{status}]   {}   Tab: new test   Enter: finish   Esc: quit",
+        "[{status}]   {}   Tab: new test   Enter: finish   F1: help   Esc: quit",
         app.config.label()
     );
 
@@ -140,7 +159,9 @@ fn render_stats(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Line::from(vec![
                 Span::styled(
                     format!("{:.0} WPM", ls.wpm),
-                    Style::default().fg(theme.correct).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.correct)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     format!("   Raw: {:.0}", ls.raw_wpm),
@@ -178,7 +199,9 @@ fn render_stats(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Line::from(vec![
                 Span::styled(
                     format!("{:.0} WPM", ls.wpm),
-                    Style::default().fg(theme.correct).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.correct)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     format!("   Accuracy: {:.1}%", ls.accuracy),
@@ -215,7 +238,11 @@ fn char_style(state: CharState, effect: Option<(EffectKind, f32)>, theme: Theme)
             }
             EffectKind::Error => {
                 style = style
-                    .bg(rgb(mix(theme.rgb(theme.background), theme.rgb(theme.incorrect), 0.55 * boost)))
+                    .bg(rgb(mix(
+                        theme.rgb(theme.background),
+                        theme.rgb(theme.incorrect),
+                        0.55 * boost,
+                    )))
                     .add_modifier(Modifier::BOLD);
             }
         }
@@ -235,10 +262,21 @@ fn apply_cursor(
     theme: Theme,
     snap: bool,
 ) {
-    let fade = if snap { 1.0 } else { (alpha + pop * 0.6).min(1.0) };
-    let cursor_color = rgb(mix(theme.rgb(theme.background), theme.rgb(theme.cursor), fade));
+    let fade = if snap {
+        1.0
+    } else {
+        (alpha + pop * 0.6).min(1.0)
+    };
+    let cursor_color = rgb(mix(
+        theme.rgb(theme.background),
+        theme.rgb(theme.cursor),
+        fade,
+    ));
     let fallback = " ".to_owned();
-    let content = spans.get(col).map(|s| s.content.to_string()).unwrap_or(fallback);
+    let content = spans
+        .get(col)
+        .map(|s| s.content.to_string())
+        .unwrap_or(fallback);
     if col < spans.len() {
         spans[col] = cursor_span(content, glyph, cursor_color, frac, theme);
     } else if col == spans.len() && col < width {
@@ -254,14 +292,15 @@ fn cursor_span(
     theme: Theme,
 ) -> Span<'static> {
     match glyph {
-        CursorGlyph::Block => Span::styled(
-            content,
-            Style::default().fg(theme.background).bg(cursor),
-        ),
+        CursorGlyph::Block => {
+            Span::styled(content, Style::default().fg(theme.background).bg(cursor))
+        }
         CursorGlyph::Bar => Span::styled(bar_ramp(frac).to_string(), Style::default().fg(cursor)),
         CursorGlyph::Underline => Span::styled(
             content,
-            Style::default().fg(cursor).add_modifier(Modifier::UNDERLINED),
+            Style::default()
+                .fg(cursor)
+                .add_modifier(Modifier::UNDERLINED),
         ),
     }
 }
@@ -281,6 +320,12 @@ fn wrap_chars(test: &TypingTest, max_chars: usize) -> Vec<Vec<usize>> {
     let mut lines: Vec<Vec<usize>> = Vec::new();
     let mut line: Vec<usize> = Vec::new();
     for index in 0..test.chars.len() {
+        // Hard line breaks (code layout) end the current row; the newline
+        // itself is never rendered or typed.
+        if test.chars[index] == '\n' {
+            lines.push(std::mem::take(&mut line));
+            continue;
+        }
         if line.len() == max_chars {
             lines.push(std::mem::take(&mut line));
         }
@@ -293,15 +338,18 @@ fn wrap_chars(test: &TypingTest, max_chars: usize) -> Vec<Vec<usize>> {
     lines
 }
 
-fn cursor_position(wrapped: &[Vec<usize>], cursor: usize) -> (usize, usize) {
+fn cursor_position(wrapped: &[Vec<usize>], chars: &[char], cursor: usize) -> (usize, usize) {
     let mut prev_end = 0;
     let last_row = wrapped.len() - 1;
     for (row, line) in wrapped.iter().enumerate() {
         let end = prev_end + line.len();
         if cursor < end || (row == last_row && cursor == end) {
-            return (row, cursor - prev_end);
+            // A cursor parked on a newline points at the next line's start.
+            return (row, cursor.saturating_sub(prev_end));
         }
-        prev_end = end;
+        // The next row starts past the newline that ended this one.
+        let next = prev_end + line.len();
+        prev_end = next + usize::from(chars.get(next) == Some(&'\n'));
     }
     (0, 0)
 }
@@ -309,9 +357,14 @@ fn cursor_position(wrapped: &[Vec<usize>], cursor: usize) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     fn test_of(text: &str) -> TypingTest {
         TypingTest::new(crate::typing::test::TestMode::Words(1), &[text.to_owned()])
+    }
+
+    fn pos(wrapped: &[Vec<usize>], chars: &[char], cursor: usize) -> (usize, usize) {
+        cursor_position(wrapped, chars, cursor)
     }
 
     #[test]
@@ -346,7 +399,7 @@ mod tests {
     fn cursor_at_end_lands_on_last_line() {
         let test = test_of("abc");
         let wrapped = wrap_chars(&test, 3);
-        let (row, col) = cursor_position(&wrapped, 3);
+        let (row, col) = pos(&wrapped, &test.chars, 3);
         assert_eq!((row, col), (1, 0));
     }
 
@@ -354,8 +407,70 @@ mod tests {
     fn cursor_mid_text_lands_on_its_line() {
         let test = test_of("abcdef");
         let wrapped = wrap_chars(&test, 3);
-        let (row, col) = cursor_position(&wrapped, 4);
+        let (row, col) = pos(&wrapped, &test.chars, 4);
         assert_eq!((row, col), (1, 1));
+    }
+
+    #[test]
+    fn newlines_preserve_layout_in_wrap_and_cursor() {
+        let test = TypingTest::with_text(crate::typing::test::TestMode::Words(2), "ab\ncd");
+        // "ab", then a hard break, then "cd": exactly two rows; the newline
+        // itself is never part of a row.
+        let wrapped = wrap_chars(&test, 10);
+        assert_eq!(wrapped.len(), 2);
+        assert_eq!(wrapped[0], vec![0, 1]); // 'a', 'b' — newline is skipped
+        assert_eq!(wrapped[1], vec![3, 4]); // 'c', 'd'
+
+        // Cursor on char 2 ('c') is the second row, column 0.
+        let (row, col) = pos(&wrapped, &test.chars, 2);
+        assert_eq!((row, col), (1, 0));
+        // Cursor on char 0 is the first row, column 0.
+        let (row, col) = pos(&wrapped, &test.chars, 0);
+        assert_eq!((row, col), (0, 0));
+        // Cursor on 'c' (3) is the second row, column 0.
+        let (row, col) = pos(&wrapped, &test.chars, 3);
+        assert_eq!((row, col), (1, 0));
+        // Cursor on 'd' (4) is the second row, column 1.
+        let (row, col) = pos(&wrapped, &test.chars, 4);
+        assert_eq!((row, col), (1, 1));
+        // Cursor past the end (5) sits at the end of the last text row.
+        let (row, col) = pos(&wrapped, &test.chars, 5);
+        assert_eq!((row, col), (1, 2));
+        // Cursor on the newline itself (index 2) sits at the second row start.
+        let (row, col) = pos(&wrapped, &test.chars, 2);
+        assert_eq!((row, col), (1, 0));
+    }
+
+    #[test]
+    fn with_text_tracks_lines_as_completed_words() {
+        let mut test = TypingTest::with_text(
+            crate::typing::test::TestMode::Words(3),
+            "let a = 1;\nlet b = 2;\nprintln!(b);",
+        );
+        assert_eq!(test.completed_words(), 0);
+        for key in "let a = 1;\n".chars() {
+            test.handle_key(key, Instant::now());
+        }
+        assert_eq!(test.completed_words(), 1);
+        for key in "let".chars() {
+            test.handle_key(key, Instant::now());
+        }
+        assert_eq!(test.completed_words(), 1);
+        for key in " b = 2;\nprintln!(b);".chars() {
+            test.handle_key(key, Instant::now());
+        }
+        assert_eq!(test.status, crate::typing::test::TestStatus::Finished);
+        assert_eq!(test.completed_words(), 3);
+    }
+
+    #[test]
+    fn with_text_keeps_indentation_in_the_target() {
+        let test = TypingTest::with_text(
+            crate::typing::test::TestMode::Words(2),
+            "fn f() {\n    return 1;\n}",
+        );
+        assert_eq!(test.word_at(16), Some("return".to_owned()));
+        assert!(test.text.contains('\n'));
     }
 
     #[test]
@@ -379,14 +494,15 @@ mod tests {
     fn prompt_and_stats_split_leave_room_at_each_size() {
         for (height, expected_stats) in [(80, 5u16), (24, 5), (23, 3), (14, 3)] {
             let area = Rect::new(0, 0, 80, height);
-            let chunks = Layout::vertical([
-                Constraint::Min(3),
-                Constraint::Length(stats_height(height)),
-            ])
-            .split(area);
+            let chunks =
+                Layout::vertical([Constraint::Min(3), Constraint::Length(stats_height(height))])
+                    .split(area);
             assert_eq!(chunks[1].height, expected_stats, "height={height}");
             assert_eq!(chunks[0].height + chunks[1].height, height);
-            assert!(chunks[0].height >= 3, "prompt shrinks past min at height={height}");
+            assert!(
+                chunks[0].height >= 3,
+                "prompt shrinks past min at height={height}"
+            );
         }
     }
 }

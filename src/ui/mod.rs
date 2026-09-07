@@ -7,6 +7,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 pub mod config;
+pub mod help;
 pub mod history;
 pub mod results;
 pub mod settings;
@@ -14,6 +15,7 @@ pub mod typing;
 pub mod widgets;
 
 pub use config::ConfigScreen;
+pub use help::HelpScreen;
 pub use history::{HistoryScreen, HistoryTab};
 pub use results::ResultsScreen;
 pub use settings::SettingsScreen;
@@ -33,6 +35,10 @@ pub fn run_event_loop(
             match event::read()? {
                 event::Event::Key(key) => {
                     app.handle_key(&key);
+                    redraw = true;
+                }
+                event::Event::Mouse(mouse) => {
+                    app.handle_mouse(&mouse);
                     redraw = true;
                 }
                 event::Event::Resize(_, _) => {
@@ -68,5 +74,6 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
         AppState::Results => ResultsScreen.render(frame, area, app),
         AppState::Settings => SettingsScreen.render(frame, area, app),
         AppState::History => HistoryScreen.render(frame, area, app),
+        AppState::Help => HelpScreen.render(frame, area, app),
     }
 }

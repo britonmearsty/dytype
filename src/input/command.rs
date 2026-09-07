@@ -15,11 +15,12 @@ pub enum Command {
     PreviousTest,
     OpenSettings,
     OpenHistory,
+    OpenHelp,
     ToggleStats,
 }
 
 impl Command {
-    pub const ALL: [Command; 8] = [
+    pub const ALL: [Command; 9] = [
         Command::Quit,
         Command::Restart,
         Command::Pause,
@@ -27,6 +28,7 @@ impl Command {
         Command::PreviousTest,
         Command::OpenSettings,
         Command::OpenHistory,
+        Command::OpenHelp,
         Command::ToggleStats,
     ];
 
@@ -39,6 +41,7 @@ impl Command {
             "previous_test" => Some(Command::PreviousTest),
             "open_settings" => Some(Command::OpenSettings),
             "open_history" => Some(Command::OpenHistory),
+            "open_help" => Some(Command::OpenHelp),
             "toggle_stats" => Some(Command::ToggleStats),
             _ => None,
         }
@@ -174,6 +177,7 @@ fn default_bindings() -> Vec<(Command, Key)> {
         (Command::PreviousTest, Key::parse("F4").unwrap()),
         (Command::OpenSettings, Key::parse("F2").unwrap()),
         (Command::OpenHistory, Key::parse("F3").unwrap()),
+        (Command::OpenHelp, Key::parse("F1").unwrap()),
         (Command::ToggleStats, Key::parse("ctrl+t").unwrap()),
     ]
 }
@@ -206,6 +210,12 @@ impl Keymap {
             .iter()
             .find(|(candidate, _)| *candidate == command)
             .map(|(_, key)| *key)
+    }
+
+    /// Every effective binding, including secondary keys for a command
+    /// (e.g. Quit is on both ctrl+c and esc). Used by the help screen.
+    pub fn entries(&self) -> impl Iterator<Item = (Command, Key)> + '_ {
+        self.bindings.iter().copied()
     }
 
     /// Applies per-command overrides from configuration. Unrecognized command
@@ -243,26 +253,41 @@ mod tests {
                 modifiers: KeyModifiers::CONTROL,
             })
         );
-        assert_eq!(Key::parse("F2"), Some(Key {
-            code: KeyCode::F(2),
-            modifiers: KeyModifiers::NONE,
-        }));
-        assert_eq!(Key::parse("f12"), Some(Key {
-            code: KeyCode::F(12),
-            modifiers: KeyModifiers::NONE,
-        }));
-        assert_eq!(Key::parse("esc"), Some(Key {
-            code: KeyCode::Esc,
-            modifiers: KeyModifiers::NONE,
-        }));
-        assert_eq!(Key::parse("space"), Some(Key {
-            code: KeyCode::Char(' '),
-            modifiers: KeyModifiers::NONE,
-        }));
-        assert_eq!(Key::parse("shift+tab"), Some(Key {
-            code: KeyCode::Tab,
-            modifiers: KeyModifiers::SHIFT,
-        }));
+        assert_eq!(
+            Key::parse("F2"),
+            Some(Key {
+                code: KeyCode::F(2),
+                modifiers: KeyModifiers::NONE,
+            })
+        );
+        assert_eq!(
+            Key::parse("f12"),
+            Some(Key {
+                code: KeyCode::F(12),
+                modifiers: KeyModifiers::NONE,
+            })
+        );
+        assert_eq!(
+            Key::parse("esc"),
+            Some(Key {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+            })
+        );
+        assert_eq!(
+            Key::parse("space"),
+            Some(Key {
+                code: KeyCode::Char(' '),
+                modifiers: KeyModifiers::NONE,
+            })
+        );
+        assert_eq!(
+            Key::parse("shift+tab"),
+            Some(Key {
+                code: KeyCode::Tab,
+                modifiers: KeyModifiers::SHIFT,
+            })
+        );
     }
 
     #[test]
@@ -315,6 +340,10 @@ mod tests {
         assert_eq!(
             keymap.resolve(&event(KeyCode::F(2), KeyModifiers::NONE)),
             Some(Command::OpenSettings)
+        );
+        assert_eq!(
+            keymap.resolve(&event(KeyCode::F(1), KeyModifiers::NONE)),
+            Some(Command::OpenHelp)
         );
         assert_eq!(
             keymap.resolve(&event(KeyCode::F(3), KeyModifiers::NONE)),

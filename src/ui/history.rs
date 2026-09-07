@@ -24,9 +24,13 @@ const TABS: [HistoryTab; 5] = [
 const CHART_WIDTH_FLOOR: usize = 12;
 
 fn chart_height(area: Rect) -> usize {
-    if area.height >= 24 { 7 }
-    else if area.height >= 16 { 5 }
-    else { 3 }
+    if area.height >= 24 {
+        7
+    } else if area.height >= 16 {
+        5
+    } else {
+        3
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -56,6 +60,26 @@ impl HistoryTab {
     }
 }
 
+/// Which tab (if any) is under a click on the tab bar row of `area`. The bar
+/// is the second content line (below the border and its blank spacer) and each
+/// tab occupies a fixed-width slot; clicks map by cumulative slot width.
+pub fn tab_at(area: Rect, x: u16, y: u16) -> Option<HistoryTab> {
+    if y != area.y.saturating_add(2) {
+        return None;
+    }
+    let start = usize::from(area.x).saturating_add(1);
+    let rel = usize::from(x).saturating_sub(start);
+    let mut offset = 0usize;
+    for option in TABS {
+        let width = option.label().len() + if option == TABS[0] { 4 } else { 5 };
+        if rel >= offset && rel < offset + width {
+            return Some(option);
+        }
+        offset += width;
+    }
+    None
+}
+
 fn tab_bar(tab: HistoryTab, theme: Theme) -> Line<'static> {
     let mut spans = Vec::with_capacity(TABS.len());
     for (i, option) in TABS.iter().enumerate() {
@@ -63,7 +87,9 @@ fn tab_bar(tab: HistoryTab, theme: Theme) -> Line<'static> {
         if *option == tab {
             spans.push(Span::styled(
                 format!("{pad}[ {} ]", option.label()),
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ));
         } else {
             spans.push(Span::styled(
@@ -78,7 +104,9 @@ fn tab_bar(tab: HistoryTab, theme: Theme) -> Line<'static> {
 fn section(title: &str, theme: Theme) -> Line<'static> {
     Line::from(Span::styled(
         format!(" {title} "),
-        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
     ))
 }
 
@@ -110,7 +138,11 @@ fn chart_width(area: Rect) -> usize {
 }
 
 fn max_wpm(points: &[DailyPoint]) -> f64 {
-    points.iter().map(|p| p.wpm).fold(0.0_f64, f64::max).max(1e-9)
+    points
+        .iter()
+        .map(|p| p.wpm)
+        .fold(0.0_f64, f64::max)
+        .max(1e-9)
 }
 
 pub struct HistoryScreen;
@@ -149,12 +181,19 @@ impl HistoryScreen {
             .borders(Borders::ALL)
             .style(Style::default().bg(theme.background));
         frame.render_widget(
-            Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+            Paragraph::new(lines)
+                .block(block)
+                .wrap(Wrap { trim: false }),
             area,
         );
     }
 
-    fn render_overview(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], theme: Theme) {
+    fn render_overview(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        results: &[TestResult],
+        theme: Theme,
+    ) {
         let summary = analysis::summarize(results);
         let info = progress::level_from_xp(progress::total_xp(results));
         let earned = progress::earned(results);
@@ -189,7 +228,9 @@ impl HistoryScreen {
                 "  Level {}   XP {}/{}   total {}",
                 info.level, info.xp_into_level, info.xp_for_next_level, info.total_xp
             ),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(format!(
             "  [{bar}]  {:.0}%        streak {} day{}",
@@ -217,7 +258,13 @@ impl HistoryScreen {
         }
     }
 
-    fn render_wpm(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], area: Rect, theme: Theme) {
+    fn render_wpm(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        results: &[TestResult],
+        area: Rect,
+        theme: Theme,
+    ) {
         let width = chart_width(area);
 
         lines.push(section("wpm over time", theme));
@@ -254,7 +301,13 @@ impl HistoryScreen {
         )));
     }
 
-    fn render_accuracy(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], area: Rect, theme: Theme) {
+    fn render_accuracy(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        results: &[TestResult],
+        area: Rect,
+        theme: Theme,
+    ) {
         let width = chart_width(area);
 
         lines.push(section("accuracy over time", theme));
@@ -283,7 +336,13 @@ impl HistoryScreen {
         )));
     }
 
-    fn render_errors(&self, lines: &mut Vec<Line<'static>>, results: &[TestResult], area: Rect, theme: Theme) {
+    fn render_errors(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        results: &[TestResult],
+        area: Rect,
+        theme: Theme,
+    ) {
         let width = chart_width(area);
 
         lines.push(section("error rate over time", theme));
@@ -312,7 +371,38 @@ impl HistoryScreen {
                 let bar = chart::bar_row(stat.errors as f64, max_errors, bar_len);
                 lines.push(Line::from(format!(
                     "  {:>1} {}  {:>3} errors  ({:.0}%)",
-                    stat.ch, bar, stat.errors, stat.rate(),
+                    stat.ch,
+                    bar,
+                    stat.errors,
+                    stat.rate(),
+                )));
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(section("weak sequences", theme));
+        let bigrams = analysis::bigram_errors(results, 5);
+        let trigrams = analysis::trigram_errors(results, 5);
+        if bigrams.is_empty() && trigrams.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  No recorded mistakes. Flawless!",
+                Style::default().fg(theme.correct),
+            )));
+        } else {
+            for stat in &bigrams {
+                lines.push(Line::from(format!(
+                    "  {:<4} {:>3} errors  ({:.0}%)",
+                    stat.ngram,
+                    stat.errors,
+                    stat.rate(),
+                )));
+            }
+            for stat in &trigrams {
+                lines.push(Line::from(format!(
+                    "  {:<4} {:>3} errors  ({:.0}%)",
+                    stat.ngram,
+                    stat.errors,
+                    stat.rate(),
                 )));
             }
         }
@@ -337,7 +427,9 @@ impl HistoryScreen {
                 "  {:<4} {:<6} {:<6} {:<7} {:>4} {:>6} {:>5} {:>6}",
                 "id", "date", "mode", "difficulty", "wpm", "accuracy", "errors", "time"
             ),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         )));
         for result in results.iter().rev().take(12) {
             lines.push(Line::from(format!(
@@ -364,11 +456,30 @@ mod tests {
     }
 
     #[test]
-    fn tabs_cycle_wrap_around() {
-        assert_eq!(HistoryTab::default(), HistoryTab::Overview);
+    fn tab_cycles_and_wraps() {
         assert_eq!(HistoryTab::Overview.cycle(1), HistoryTab::Wpm);
-        assert_eq!(HistoryTab::Overview.cycle(-1), HistoryTab::History);
+        assert_eq!(HistoryTab::Wpm.cycle(1), HistoryTab::Accuracy);
+        assert_eq!(HistoryTab::Accuracy.cycle(1), HistoryTab::Errors);
+        assert_eq!(HistoryTab::Errors.cycle(1), HistoryTab::History);
         assert_eq!(HistoryTab::History.cycle(1), HistoryTab::Overview);
+    }
+
+    #[test]
+    fn tab_at_finds_tab_under_click_on_tab_bar_row() {
+        let area = Rect::new(0, 0, 100, 30);
+        // Tab bar is at area.y + 2. Overview (label 8) occupies [x1, x1+12).
+        let start = area.x + 1;
+        assert_eq!(
+            tab_at(area, start + 1, area.y + 2),
+            Some(HistoryTab::Overview)
+        );
+        assert_eq!(
+            tab_at(area, start + 11, area.y + 2),
+            Some(HistoryTab::Overview)
+        );
+        assert_eq!(tab_at(area, start + 16, area.y + 2), Some(HistoryTab::Wpm));
+        assert_eq!(tab_at(area, start + 1, area.y + 1), None); // off the bar
+        assert_eq!(tab_at(area, 200, area.y + 2), None); // past all tabs
     }
 
     #[test]

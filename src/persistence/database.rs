@@ -24,8 +24,7 @@ fn io_missing(message: &str) -> std::io::Error {
 
 impl Database {
     pub fn open() -> std::io::Result<Self> {
-        let path =
-            default_path().ok_or_else(|| io_missing("no config directory available"))?;
+        let path = default_path().ok_or_else(|| io_missing("no config directory available"))?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -64,7 +63,10 @@ impl Database {
     }
 
     pub fn append(&self, result: &TestResult) -> std::io::Result<()> {
-        let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
         writeln!(file, "{}", encode(result))
     }
 
@@ -87,7 +89,14 @@ fn encode(result: &TestResult) -> String {
     let char_stats: String = result
         .char_stats
         .iter()
-        .map(|stat| format!("{}:{}:{};", stat.ch as u32, stat.typed, stat.errors))
+        .map(|stat| {
+            let prev = stat.prev.map_or(String::new(), |c| (c as u32).to_string());
+            let prev2 = stat.prev2.map_or(String::new(), |c| (c as u32).to_string());
+            format!(
+                "{}:{}:{}:{}:{};",
+                stat.ch as u32, stat.typed, stat.errors, prev, prev2
+            )
+        })
         .collect();
     format!(
         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
@@ -163,7 +172,9 @@ fn decode_mode(field: &str) -> Option<TestMode> {
     if let Some(count) = field.strip_prefix('w') {
         count.parse().ok().map(TestMode::Words)
     } else if let Some(secs) = field.strip_prefix('t') {
-        secs.parse().ok().map(|s| TestMode::Time(std::time::Duration::from_secs(s)))
+        secs.parse()
+            .ok()
+            .map(|s| TestMode::Time(std::time::Duration::from_secs(s)))
     } else {
         None
     }
@@ -175,16 +186,34 @@ fn decode_char_stats(field: &str) -> Vec<CharStat> {
         if entry.is_empty() {
             continue;
         }
-        let mut parts = entry.split(':');
-        let (Some(code), Some(typed), Some(errors)) = (parts.next(), parts.next(), parts.next())
+        let parts: Vec<&str> = entry.split(':').collect();
+        if parts.len() != 3 && parts.len() != 5 {
+            continue;
+        }
+        let (Some(code), Some(typed), Some(errors)) = (parts.first(), parts.get(1), parts.get(2))
         else {
             continue;
         };
-        if let (Some(code), Ok(typed), Ok(errors)) =
-            (code.parse::<u32>().ok(), typed.parse::<u32>(), errors.parse::<u32>())
-            && let Some(ch) = char::from_u32(code)
-        {
-            stats.push(CharStat { ch, typed, errors });
+        if let (Some(ch), Ok(typed), Ok(errors)) = (
+            code.parse::<u32>().ok().and_then(char::from_u32),
+            typed.parse::<u32>(),
+            errors.parse::<u32>(),
+        ) {
+            let (prev, prev2) = if parts.len() == 5 {
+                (
+                    parts[3].parse().ok().and_then(char::from_u32),
+                    parts[4].parse().ok().and_then(char::from_u32),
+                )
+            } else {
+                (None, None)
+            };
+            stats.push(CharStat {
+                ch,
+                typed,
+                errors,
+                prev,
+                prev2,
+            });
         }
     }
     stats
@@ -193,8 +222,8 @@ fn decode_char_stats(field: &str) -> Vec<CharStat> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
     use crate::typing::test::TypingTest;
+    use std::time::{Duration, Instant};
 
     fn sample_result(id: u64, wpm: f64, chars: usize) -> TestResult {
         let words: Vec<String> = vec!["foo".to_owned(), "bar".to_owned()];
@@ -210,22 +239,101 @@ mod tests {
         result
     }
 
-fn temp_path(unique: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "dytype-history-test-{}-{unique}.tsv",
-        std::process::id()
-    ))
-}
+    fn temp_path(unique: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "dytype-history-test-{}-{unique}.tsv",
+            std::process::id()
+        ))
+    }
 
     #[test]
     fn encode_decode_roundtrips() {
         let mut result = sample_result(42, 77.5, 90);
         result.char_stats = vec![
-            CharStat { ch: 'e', typed: 30, errors: 4 },
-            CharStat { ch: ' ', typed: 10, errors: 0 },
+            CharStat {
+                ch: 'e',
+                typed: 30,
+                errors: 4,
+                prev: Some('h'),
+                prev2: None,
+            },
+            CharStat {
+                ch: ' ',
+                typed: 10,
+                errors: 0,
+                prev: None,
+                prev2: None,
+            },
         ];
         let decoded = decode(&encode(&result)).expect("decodes");
         assert_eq!(decoded, result);
+    }
+
+    #[test]
+    fn decode_char_stats_accepts_legacy_three_part_entries() {
+        // Pre-bigram records stored only `code:typed:errors;`; decoding must
+        // fall back to no context rather than dropping the entry.
+        let field = "114:30:4;32:10:0;";
+        let stats = decode_char_stats(field);
+        assert_eq!(
+            stats,
+            vec![
+                CharStat {
+                    ch: 'r',
+                    typed: 30,
+                    errors: 4,
+                    prev: None,
+                    prev2: None
+                },
+                CharStat {
+                    ch: ' ',
+                    typed: 10,
+                    errors: 0,
+                    prev: None,
+                    prev2: None
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn decode_char_stats_skips_garbage_entries() {
+        let stats = decode_char_stats("114:30:4;garbage;:1:;114:x:4;");
+        assert_eq!(
+            stats,
+            vec![CharStat {
+                ch: 'r',
+                typed: 30,
+                errors: 4,
+                prev: None,
+                prev2: None
+            }]
+        );
+    }
+
+    #[test]
+    fn decode_char_stats_reads_context_columns() {
+        let field = "114:30:4:104:115;111:5:0::;";
+        let stats = decode_char_stats(field);
+        assert_eq!(
+            stats,
+            vec![
+                CharStat {
+                    ch: 'r',
+                    typed: 30,
+                    errors: 4,
+                    prev: Some('h'),
+                    prev2: Some('s')
+                },
+                CharStat {
+                    ch: 'o',
+                    typed: 5,
+                    errors: 0,
+                    prev: None,
+                    prev2: None
+                },
+            ]
+        );
     }
 
     #[test]
@@ -233,7 +341,10 @@ fn temp_path(unique: &str) -> PathBuf {
         assert_eq!(format_float(77.5), "77.5");
         assert_eq!(format_float(100.0), "100");
         assert_eq!(format_float(87.125), "87.125");
-        assert_eq!(decode(&encode(&sample_result(1, 87.125, 10))).unwrap().wpm, 87.125);
+        assert_eq!(
+            decode(&encode(&sample_result(1, 87.125, 10))).unwrap().wpm,
+            87.125
+        );
     }
 
     #[test]

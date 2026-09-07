@@ -21,17 +21,9 @@ fn glyph(previous: Option<i32>, current: i32, next: Option<i32>) -> char {
             if p == current && n == current {
                 '─'
             } else if p == current {
-                if n < current {
-                    '╭'
-                } else {
-                    '╯'
-                }
+                if n < current { '╭' } else { '╯' }
             } else if n == current {
-                if p > current {
-                    '╰'
-                } else {
-                    '╮'
-                }
+                if p > current { '╰' } else { '╮' }
             } else if p > current && n > current {
                 '╭'
             } else if p < current && n < current {
@@ -101,8 +93,16 @@ pub fn line_chart(values: &[f64], width: usize, height: usize) -> Vec<String> {
     let mut grid = vec![vec![' '; width]; height];
     for column in 0..width {
         let current = rows[column];
-        let previous = if column > 0 { Some(rows[column - 1]) } else { None };
-        let next = if column + 1 < width { Some(rows[column + 1]) } else { None };
+        let previous = if column > 0 {
+            Some(rows[column - 1])
+        } else {
+            None
+        };
+        let next = if column + 1 < width {
+            Some(rows[column + 1])
+        } else {
+            None
+        };
         if let Some(previous_row) = previous {
             for row in (current.min(previous_row) + 1)..current.max(previous_row) {
                 grid[row as usize][column] = '│';
@@ -110,7 +110,9 @@ pub fn line_chart(values: &[f64], width: usize, height: usize) -> Vec<String> {
         }
         grid[current as usize][column] = glyph(previous, current, next);
     }
-    grid.into_iter().map(|row| row.into_iter().collect()).collect()
+    grid.into_iter()
+        .map(|row| row.into_iter().collect())
+        .collect()
 }
 
 /// Fills a horizontal bar proportional to `value / max`, using `█` blocks.

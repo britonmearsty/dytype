@@ -10,7 +10,12 @@ fn pools() -> WordPools {
 #[test]
 fn embedded_pools_all_lowercase_ascii() {
     let pools = pools();
-    for pool in [&pools.easy.list, &pools.normal.list, &pools.hard.list, &pools.expert.list] {
+    for pool in [
+        &pools.easy.list,
+        &pools.normal.list,
+        &pools.hard.list,
+        &pools.expert.list,
+    ] {
         assert!(!pool.is_empty());
         for word in pool {
             assert!(
