@@ -23,7 +23,7 @@ The one-line installer fetches the right one, verifies its checksum, and puts
 it in `~/.local/bin`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/britonmearsty/dytype/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/britonmearsty/dytype/master/install.sh | sh
 ```
 
 The installer prints what it downloads and where it installs; `sh install.sh --help`
