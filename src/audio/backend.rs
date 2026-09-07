@@ -49,10 +49,13 @@ impl Player {
 
     fn probe_arg(self) -> &'static str {
         match self {
-            Player::Ffplay => "-version",
+            #[cfg(target_os = "linux")]
+            Player::Aplay | Player::Paplay => "--version",
             #[cfg(target_os = "macos")]
             Player::Afplay => "-h",
-            _ => "--version",
+            #[cfg(target_os = "windows")]
+            Player::PowerShell => "--version",
+            Player::Ffplay => "-version",
         }
     }
 
@@ -464,7 +467,7 @@ mod tests {
         assert!(args.contains(&"-Command".to_string()));
         let command = args.last().expect("command is last");
         assert!(command.contains("System.Media.SoundPlayer"));
-        assert_eq!(command.contains("clip.wav"), true);
+        assert!(command.contains("clip.wav"));
     }
 
     #[test]
